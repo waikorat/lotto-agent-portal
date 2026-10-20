@@ -5,7 +5,7 @@ import psycopg2
 from datetime import datetime
 import itertools
 
-app = FastAPI(title="LuckyNumber Agent Portal")
+app = FastAPI(title="LuckyNumber Agent Portal - Full Admin")
 
 # เชื่อมต่อฐานข้อมูล Supabase PostgreSQL (ชุดเดียวกับระบบหลัก)
 DB_URI = "postgresql://postgres.mpyswshlrxwpirzdexrn:Clublifekorat3888@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
@@ -13,7 +13,7 @@ DB_URI = "postgresql://postgres.mpyswshlrxwpirzdexrn:Clublifekorat3888@aws-0-ap-
 def connect_db():
     return psycopg2.connect(DB_URI)
 
-# ================= 1. หน้าจอ LOGIN (เข้าสู่ระบบจริง) =================
+# ================= 1. หน้าจอ LOGIN =================
 LOGIN_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -58,13 +58,13 @@ def login_action(username: str = Form(...), password: str = Form(...)):
     try:
         conn = connect_db()
         c = conn.cursor()
-        # ตรวจสอบชื่อผู้ใช้และรหัสผ่านจากฐานข้อมูลจริง
         c.execute("SELECT username, role FROM Users WHERE username=%s AND password=%s", (username, password))
         user = c.fetchone()
         conn.close()
         
         if user:
-            # ล็อกอินสำเร็จ ส่งต่อไปยังหน้าเลือกตลาด/งวดหวย
+            role = user[1]
+            # หากเป็น Admin สามารถเลือกได้ว่าจะเข้าหน้าบริหารระบบ หรือหน้าคีย์หวยปกติ
             return RedirectResponse(url=f"/select-market?user={username}", status_code=status.HTTP_303_SEE_OTHER)
         else:
             return RedirectResponse(url="/login?error=Username%20or%20Password%20ไม่ถูกต้อง", status_code=status.HTTP_303_SEE_OTHER)
@@ -72,7 +72,7 @@ def login_action(username: str = Form(...), password: str = Form(...)):
         return RedirectResponse(url=f"/login?error=DB%20Error", status_code=status.HTTP_303_SEE_OTHER)
 
 
-# ================= 2. หน้าจอเลือกตลาด / งวดหวย (Market Selection) =================
+# ================= 2. หน้าจอเลือกตลาด / เมนูหลัก (Market Selection) =================
 SELECT_MARKET_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -84,27 +84,34 @@ SELECT_MARKET_TEMPLATE = """
         body { background-color: #f7e6d0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
         .top-header { background-color: #000; color: white; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #d4af37; }
         .logo-text { font-family: 'Georgia', serif; font-style: italic; font-weight: bold; font-size: 1.8rem; color: #f3e5ab; }
-        .container-box { max-width: 800px; margin: 40px auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-top: 4px solid #d4af37; }
+        .container-box { max-width: 900px; margin: 30px auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-top: 4px solid #d4af37; }
     </style>
 </head>
 <body>
     <div class="top-header">
         <span class="logo-text">LuckyNumber</span>
-        <div>ยินดีต้อนรับ: <b>{{ username }}</b> | <a href="/login" class="text-danger text-decoration-none fw-bold">ออกจากระบบ</a></div>
+        <div>ยินดีต้อนรับ: <b>{{ username }} ({{ role }})</b> | <a href="/login" class="text-danger text-decoration-none fw-bold">ออกจากระบบ</a></div>
     </div>
     <div class="container container-box">
-        <h3 class="fw-bold mb-4 text-center">📌 เลือกลอตเตอรี่ / ตลาดหวยที่เปิดให้แทง</h3>
+        {% if role == 'Admin' %}
+        <div class="alert alert-dark d-flex justify-content: space-between align-items-center mb-4">
+            <div>⚙️ <b>โหมดผู้ดูแลระบบ (Admin Control Panel)</b></div>
+            <a href="/admin-dashboard?user={{ username }}" class="btn btn-warning btn-sm fw-bold text-dark">🛠️ ไปยังหน้าจัดการระบบทั้งหมด (สร้างหวย/งวด/ตั้งค่า)</a>
+        </div>
+        {% endif %}
+
+        <h3 class="fw-bold mb-3">📌 เลือกลอตเตอรี่ / ตลาดหวยเพื่อเข้าคีย์งาน</h3>
         <div class="list-group">
             {% for m in markets %}
-            <a href="/portal?user={{ username }}&market={{ m[1] }}&draw={{ m[2] }}" class="list-group-item list-group-item-action d-flex justify-content: space-between align-items-center py-3 mb-2 border rounded">
+            <a href="/portal?user={{ username }}&market={{ m[1] }}&draw={{ m[2] }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items: center py-3 mb-2 border rounded">
                 <div>
                     <h5 class="mb-1 text-primary fw-bold">🇻🇳 {{ m[1] }}</h5>
-                    <small class="text-muted">งวดประจำวันที่: {{ m[2] }}</small>
+                    <small class="text-muted">งวดประจำวันที่: {{ m[2] }} | สถานะ: <span class="badge bg-success">{{ m[3] }}</span></small>
                 </div>
-                <span class="badge bg-success px-3 py-2">เปิดรับแทง ➡️</span>
+                <span class="btn btn-outline-primary btn-sm fw-bold">เข้าคีย์โพย ➡️</span>
             </a>
             {% else %}
-            <div class="alert alert-warning text-center">ยังไม่มีตลาดหวยที่เปิดอยู่ในขณะนี้ (ระบบดึงจากตาราง LotteryCampaigns)</div>
+            <div class="alert alert-warning text-center">ยังไม่มีตลาดหวยที่เปิดอยู่ในขณะนี้</div>
             {% endfor %}
         </div>
     </div>
@@ -117,20 +124,166 @@ def select_market(user: str):
     try:
         conn = connect_db()
         c = conn.cursor()
-        # ดึงงวดหวย/ตลาดที่เปิดใช้งานจริงจากระบบเดิม
-        c.execute("SELECT id, market_name, draw_date FROM LotteryCampaigns WHERE status='OPEN' ORDER BY id DESC")
+        c.execute("SELECT role FROM Users WHERE username=%s", (user,))
+        res = c.fetchone()
+        role = res[0] if res else "Agent"
+
+        c.execute("SELECT id, market_name, draw_date, status FROM LotteryCampaigns ORDER BY id DESC")
         markets = c.fetchall()
         conn.close()
     except:
-        markets = [
-            (1, "ฮานอย VIP", "1 ตุลาคม 2569"),
-            (2, "ลาภพัฒนา", "1 ตุลาคม 2569"),
-            (3, "หุ้นไทยเช้า", "1 ตุลาคม 2569")
-        ]
-    return Template(SELECT_MARKET_TEMPLATE).render(username=user, markets=markets)
+        role = "Admin"
+        markets = [(1, "ฮานอย VIP", "1 ตุลาคม 2569", "OPEN")]
+    return Template(SELECT_MARKET_TEMPLATE).render(username=user, role=role, markets=markets)
 
 
-# ================= 3. หน้าจอหลัก (Portal POS 3 คอลัมน์) =================
+# ================= 3. หน้าจอ ADMIN DASHBOARD (จัดการระบบทั้งหมด) =================
+ADMIN_DASHBOARD_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>LuckyNumber - Admin Management Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body { background-color: #f7e6d0; font-family: 'Segoe UI', sans-serif; }
+        .top-header { background-color: #000; color: white; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #d4af37; }
+        .logo-text { font-family: 'Georgia', serif; font-style: italic; font-weight: bold; font-size: 1.8rem; color: #f3e5ab; }
+        .card-box { background: white; border-radius: 8px; padding: 20px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin-bottom: 20px; border-top: 3px solid #0d6efd; }
+    </style>
+</head>
+<body>
+    <div class="top-header">
+        <span class="logo-text">LuckyNumber - Admin Control</span>
+        <div>ผู้ดูแลระบบ: <b>{{ username }}</b> | <a href="/select-market?user={{ username }}" class="text-warning text-decoration-none fw-bold">กลับหน้าเลือกตลาด</a></div>
+    </div>
+
+    <div class="container my-4">
+        <div class="row">
+            <!-- ส่วนที่ 1: สร้างตลาด / งวดหวยใหม่ -->
+            <div class="col-md-6">
+                <div class="card-box">
+                    <h5 class="fw-bold mb-3 text-primary">➕ สร้างตลาด / งวดหวยใหม่</h5>
+                    <form method="POST" action="/admin-create-campaign">
+                        <input type="hidden" name="username" value="{{ username }}">
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">ชื่อตลาดหวย (เช่น ฮานอย VIP, ลาวพัฒนา)</label>
+                            <input type="text" name="market_name" class="form-control form-control-sm" required>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">งวดประจำวันที่</label>
+                            <input type="text" name="draw_date" class="form-control form-control-sm" placeholder="เช่น 1 ตุลาคม 2569" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">เวลาปิดรับแทง</label>
+                            <input type="text" name="close_time" class="form-control form-control-sm" value="18:00:00" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary btn-sm fw-bold w-100">บันทึกสร้างงวดใหม่</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- ส่วนที่ 2: กำหนดเลขอั้นประจำงวด -->
+            <div class="col-md-6">
+                <div class="card-box" style="border-top-color: #dc3545;">
+                    <h5 class="fw-bold mb-3 text-danger">🚫 กำหนดเลขอั้นประจำงวด</h5>
+                    <form method="POST" action="/admin-set-blocked">
+                        <input type="hidden" name="username" value="{{ username }}">
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">เลือกตลาด/งวด</label>
+                            <select name="campaign_id" class="form-select form-select-sm">
+                                {% for m in markets %}
+                                <option value="{{ m[0] }}">{{ m[1] }} (งวด {{ m[2] }})</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">รายการเลขอั้น (คั่นด้วยจุลภาค ,)</label>
+                            <input type="text" name="blocked_nums" class="form-control form-control-sm" placeholder="เช่น 379, 528, 91" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">เงื่อนไขการอั้น</label>
+                            <select name="block_type" class="form-select form-select-sm">
+                                <option value="จ่ายครึ่ง">จ่ายครึ่งเดียว</option>
+                                <option value="ปิดรับ">ปิดรับ (ไม่รับแทง)</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-danger btn-sm fw-bold w-100">บันทึกเลขอั้น</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- ตารางจัดการงวดหวยทั้งหมดที่มีในระบบ -->
+        <div class="card-box" style="border-top-color: #198754;">
+            <h5 class="fw-bold mb-3 text-success">📋 รายการงวดหวยและสถานะในระบบ</h5>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered text-center align-middle" style="font-size: 0.9rem;">
+                    <thead class="table-dark">
+                        <tr><th>ID</th><th>ชื่อตลาด</th><th>งวดประจำวัน</th><th>สถานะ</th><th>จัดการ</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for m in markets %}
+                        <tr>
+                            <td>{{ m[0] }}</td>
+                            <td class="fw-bold">{{ m[1] }}</td>
+                            <td>{{ m[2] }}</td>
+                            <td><span class="badge bg-success">{{ m[3] }}</span></td>
+                            <td>
+                                <a href="/admin-toggle-status?id={{ m[0] }}&user={{ username }}" class="btn btn-outline-warning btn-sm">สลับสถานะ OPEN/CLOSE</a>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+@app.get("/admin-dashboard", response_class=HTMLResponse)
+def admin_dashboard(user: str):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("SELECT id, market_name, draw_date, status FROM LotteryCampaigns ORDER BY id DESC")
+        markets = c.fetchall()
+        conn.close()
+    except:
+        markets = [(1, "ฮานอย VIP", "1 ตุลาคม 2569", "OPEN")]
+    return Template(ADMIN_DASHBOARD_TEMPLATE).render(username=user, markets=markets)
+
+@app.post("/admin-create-campaign")
+def admin_create_campaign(username: str = Form(...), market_name: str = Form(...), draw_date: str = Form(...), close_time: str = Form(...)):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("INSERT INTO LotteryCampaigns (market_name, draw_date, status) VALUES (%s, %s, %s)", (market_name, draw_date, 'OPEN'))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("Create Error:", e)
+    return RedirectResponse(url=f"/admin-dashboard?user={username}", status_code=status.HTTP_303_SEE_OTHER)
+
+@app.get("/admin-toggle-status")
+def admin_toggle_status(id: int, user: str):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("SELECT status FROM LotteryCampaigns WHERE id=%s", (id,))
+        res = c.fetchone()
+        if res:
+            new_status = 'CLOSED' if res[0] == 'OPEN' else 'OPEN'
+            c.execute("UPDATE LotteryCampaigns SET status=%s WHERE id=%s", (new_status, id))
+            conn.commit()
+        conn.close()
+    except: pass
+    return RedirectResponse(url=f"/admin-dashboard?user={user}", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# ================= 4. หน้าจอหลัก POS (ตามโค้ดเดิม พร้อมเชื่อมโยงเมนู Admin) =================
 PORTAL_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -145,7 +298,6 @@ PORTAL_TEMPLATE = """
         .logo-text { font-family: 'Georgia', serif; font-style: italic; font-weight: bold; font-size: 1.8rem; color: #f3e5ab; }
         .top-nav-links { display: flex; gap: 20px; align-items: center; }
         .top-nav-links a { color: #fff; text-decoration: none; font-size: 0.9rem; }
-        .top-nav-links a:hover { color: #d4af37; }
         .main-container { display: flex; height: calc(100vh - 50px); }
         .sidebar-left { width: 250px; background-color: #000; color: white; border-right: 2px solid #d4af37; padding: 15px; flex-shrink: 0; }
         .user-box { background-color: #1a1a1a; border: 1px solid #333; padding: 10px; border-radius: 4px; font-size: 0.85rem; margin-bottom: 15px; }
@@ -157,7 +309,6 @@ PORTAL_TEMPLATE = """
         .market-banner { background-color: #dc3545; color: white; padding: 8px 15px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; font-weight: bold; margin-bottom: 15px; }
         .quick-btn-group { display: flex; gap: 10px; margin-bottom: 10px; }
         .quick-btn { background-color: #0d6efd; color: white; font-weight: bold; border: none; padding: 8px 15px; border-radius: 6px; flex-grow: 1; font-size: 0.9rem; }
-        .quick-btn:hover { background-color: #0b5ed7; }
         .preview-box { background-color: #ccfeff; border: 2px solid #0dcaf0; padding: 10px; border-radius: 6px; font-family: monospace; font-weight: bold; font-size: 1.05rem; color: #000; margin-bottom: 12px; min-height: 45px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
         .entry-form-box { background-color: rgba(255,255,255,0.6); padding: 10px; border-radius: 6px; margin-bottom: 15px; border: 1px solid #ccc; }
         .sidebar-right { width: 320px; background-color: rgba(255,255,255,0.4); border-left: 2px solid #d4af37; padding: 15px; flex-shrink: 0; overflow-y: auto; }
@@ -165,14 +316,12 @@ PORTAL_TEMPLATE = """
         .recent-table th, .recent-table td { font-size: 0.75rem; padding: 4px !important; text-align: center; }
     </style>
     <script>
-        // ฟังก์ชันอัปเดตนาฬิกาเวลาปัจจุบันแบบ Real-time บนหัวเว็บ
         function updateClock() {
             const now = new Date();
             document.getElementById('live-clock').innerText = now.toLocaleString('th-TH');
         }
         setInterval(updateClock, 1000);
 
-        // ฟังก์ชันคีย์ด่วน 6 กลับ
         function apply6Box() {
             let num = document.getElementById('mainNumInput').value.trim();
             if (num.length !== 3) { alert("กรุณากรอกตัวเลข 3 หลัก"); return; }
@@ -184,7 +333,6 @@ PORTAL_TEMPLATE = """
             permute(arr, 0, arr.length - 1);
             updatePreview(Array.from(perms).join(','));
         }
-        // ฟังก์ชันคีย์ด่วน 19 ประตู
         function apply19Door() {
             let digit = document.getElementById('mainNumInput').value.trim();
             if (digit.length !== 1) { alert("กรุณากรอกตัวเลข 1 หลัก"); return; }
@@ -196,14 +344,12 @@ PORTAL_TEMPLATE = """
             }
             updatePreview(doors.join(','));
         }
-        // ฟังก์ชันรูดหน้า
         function applyFrontRoot() {
             let digit = document.getElementById('mainNumInput').value.trim();
             if (digit.length !== 1) { alert("กรุณากรอกตัวเลข 1 หลัก"); return; }
             let doors = []; for (let i = 0; i <= 9; i++) { doors.push(digit + i); }
             updatePreview(doors.join(','));
         }
-        // ฟังก์ชันรูดหลัง
         function applyBackRoot() {
             let digit = document.getElementById('mainNumInput').value.trim();
             if (digit.length !== 1) { alert("กรุณากรอกตัวเลข 1 หลัก"); return; }
@@ -236,7 +382,6 @@ PORTAL_TEMPLATE = """
         <div class="top-nav-links">
             <span class="text-warning small" id="live-clock">กำลังโหลดเวลา...</span>
             <a href="/select-market?user={{ username }}">เปลี่ยนตลาด</a>
-            <a href="#">คู่มือใช้งาน</a>
         </div>
         <div>
             <a href="/login" class="btn btn-danger btn-sm fw-bold px-3">log out</a>
@@ -244,13 +389,11 @@ PORTAL_TEMPLATE = """
     </div>
 
     <div class="main-container">
-        <!-- ฝั่งซ้าย: ข้อมูลผู้ใช้, อัตราจ่าย, เมนูหลัก -->
         <div class="sidebar-left">
             <div class="user-box">
                 <div class="fw-bold text-warning mb-1">ข้อมูลผู้ใช้</div>
                 <div>Username: <b>{{ username }}</b></div>
                 <div>ระดับสิทธิ์: <b>{{ role }}</b></div>
-                <div>เครดิต: <span class="text-success fw-bold">500,000</span></div>
             </div>
 
             <div class="mb-3">
@@ -259,29 +402,23 @@ PORTAL_TEMPLATE = """
                     <thead><tr><th>ประเภท</th><th>รางวัล</th><th>ส่วนลด</th></tr></thead>
                     <tbody>
                         <tr><td>3ตัวตรง</td><td>800</td><td>13%</td></tr>
-                        <tr><td>3ตัวโต๊ด</td><td>125</td><td>13%</td></tr>
                         <tr><td>2ตัวบน</td><td>95</td><td>5%</td></tr>
                         <tr><td>2ตัวล่าง</td><td>95</td><td>5%</td></tr>
-                        <tr><td>วิ่งบน</td><td>3</td><td>12%</td></tr>
-                        <tr><td>วิ่งล่าง</td><td>4</td><td>12%</td></tr>
                     </tbody>
                 </table>
             </div>
 
             <div class="menu-title">เมนูหลัก</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
-            <a href="#" class="menu-item">▶ สรุปยอด/รายงาน</a>
             {% if role == 'Admin' %}
-            <a href="#" class="menu-item text-warning">⚙️ จัดการเลขอั้น (Admin)</a>
-            <a href="#" class="menu-item text-warning">⚙️ ตั้งค่าระบบ (Admin)</a>
+            <a href="/admin-dashboard?user={{ username }}" class="menu-item text-warning fw-bold">⚙️ จัดการระบบ (Admin Panel)</a>
             {% endif %}
         </div>
 
-        <!-- ตรงกลาง: แผงคีย์ด่วน, ช่อง Preview, ฟอร์มหลัก, ตารางรายการร่าง -->
         <div class="content-center">
             <div class="market-banner">
                 <div>🇻🇳 {{ market }} งวดประจำวันที่ {{ draw_date }}</div>
-                <div>เวลาปิดรับ: <span class="font-monospace text-warning">18:00:00</span></div>
+                <div>สถานะระบบ: <span class="text-warning">เปิดรับแทงปกติ</span></div>
             </div>
 
             <div class="quick-btn-group">
@@ -292,7 +429,7 @@ PORTAL_TEMPLATE = """
             </div>
 
             <div class="preview-box" id="previewContent">
-                <span class="text-muted small">preview:- (เลือกฟังก์ชันคีย์ด่วนด้านบน หรือพิมพ์ข้อมูลในฟอร์มด้านล่าง)</span>
+                <span class="text-muted small">preview:- (เลือกฟังก์ชันคีย์ด่วน หรือพิมพ์เลขในฟอร์มด้านล่าง)</span>
             </div>
 
             <form method="POST" action="/portal-add-draft" class="entry-form-box">
@@ -307,11 +444,11 @@ PORTAL_TEMPLATE = """
                         <input type="text" id="mainNumInput" name="num_input" class="form-control" placeholder="พิมพ์เลข..." oninput="refreshPreviewOnInput()" required autofocus>
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label small fw-bold mb-1">ยอดบน / 3ตัวตรง</label>
+                        <label class="form-label small fw-bold mb-1">บน / 3ตัวตรง</label>
                         <input type="number" step="any" id="topAmtInput" name="top_amt" class="form-control" placeholder="จำนวนเงิน" oninput="refreshPreviewOnInput()">
                     </div>
                     <div class="col-md-4">
-                        <label class="form-label small fw-bold mb-1">ยอดล่าง / 3ตัวโต๊ด</label>
+                        <label class="form-label small fw-bold mb-1">ล่าง / 3ตัวโต๊ด</label>
                         <input type="number" step="any" id="botAmtInput" name="bot_amt" class="form-control" placeholder="จำนวนเงิน" oninput="refreshPreviewOnInput()">
                     </div>
                 </div>
@@ -358,12 +495,11 @@ PORTAL_TEMPLATE = """
             </div>
         </div>
 
-        <!-- ฝั่งขวา: เลขอั้น และ รายการล่าสุด -->
         <div class="sidebar-right">
             <div class="blocked-box p-2">
                 <div class="text-center bg-dark text-white fw-bold py-1 mb-2" style="font-size: 0.85rem;">เลขอั้นประจำงวด</div>
                 <div class="mb-2">
-                    <div class="small fw-bold text-dark">3ตัวตรง-โต๊ด (จ่ายครึ่ง):</div>
+                    <div class="small fw-bold text-dark">รายการเลขอั้น:</div>
                     <input type="text" class="form-control form-control-sm bg-light text-danger fw-bold" value="379, 528" readonly>
                 </div>
             </div>
@@ -373,7 +509,7 @@ PORTAL_TEMPLATE = """
                 <div class="table-responsive" style="max-height: 320px; overflow-y: auto;">
                     <table class="table table-sm table-bordered recent-table">
                         <thead class="table-dark">
-                            <tr><th>DATE</th><th>Bill No.</th><th>เลข</th><th>บน</th><th>ล่าง</th><th>สุทธิ</th></tr>
+                            <tr><th>TIME</th><th>Bill</th><th>เลข</th><th>บน</th><th>ล่าง</th><th>สุทธิ</th></tr>
                         </thead>
                         <tbody>
                             {% for tx in recent_transactions %}
@@ -397,12 +533,6 @@ PORTAL_TEMPLATE = """
 </body>
 </html>
 """
-
-# ================= BACKEND CONTROLLERS =================
-
-@app.get("/", response_class=HTMLResponse)
-def root():
-    return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/portal", response_class=HTMLResponse)
 def portal_page(user: str, market: str, draw: str):
@@ -452,7 +582,7 @@ def portal_add_draft(
                     c.execute("INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
                               (user, 1, 'Customer', n, top_amt, '2ตัวบน', 95, top_amt * 0.05, top_amt * 0.95, 'ปกติ'))
                 if bot_amt > 0:
-                    c.execute("INSERT INTO TempDialog (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
+                    c.execute("INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
                               (user, 1, 'Customer', n, bot_amt, '2ตัวล่าง', 95, bot_amt * 0.05, bot_amt * 0.95, 'ปกติ'))
         conn.commit()
         conn.close()
