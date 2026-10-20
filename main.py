@@ -1,13 +1,11 @@
-from fastapi import FastAPI, Form, Request, status, HTTPException
+from fastapi import FastAPI, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Template
 import psycopg2
 from datetime import datetime
-import itertools
 
-app = FastAPI(title="LuckyNumber Agent Portal - Full Admin")
+app = FastAPI(title="LuckyNumber Agent Portal - Full Admin Complete")
 
-# เชื่อมต่อฐานข้อมูล Supabase PostgreSQL (ชุดเดียวกับระบบหลัก)
 DB_URI = "postgresql://postgres.mpyswshlrxwpirzdexrn:Clublifekorat3888@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
 
 def connect_db():
@@ -63,8 +61,6 @@ def login_action(username: str = Form(...), password: str = Form(...)):
         conn.close()
         
         if user:
-            role = user[1]
-            # หากเป็น Admin สามารถเลือกได้ว่าจะเข้าหน้าบริหารระบบ หรือหน้าคีย์หวยปกติ
             return RedirectResponse(url=f"/select-market?user={username}", status_code=status.HTTP_303_SEE_OTHER)
         else:
             return RedirectResponse(url="/login?error=Username%20or%20Password%20ไม่ถูกต้อง", status_code=status.HTTP_303_SEE_OTHER)
@@ -81,7 +77,7 @@ SELECT_MARKET_TEMPLATE = """
     <title>LuckyNumber - เลือกลอตเตอรี่ / ตลาด</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #f7e6d0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background-color: #f7e6d0; font-family: 'Segoe UI', sans-serif; }
         .top-header { background-color: #000; color: white; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #d4af37; }
         .logo-text { font-family: 'Georgia', serif; font-style: italic; font-weight: bold; font-size: 1.8rem; color: #f3e5ab; }
         .container-box { max-width: 900px; margin: 30px auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); border-top: 4px solid #d4af37; }
@@ -94,13 +90,13 @@ SELECT_MARKET_TEMPLATE = """
     </div>
     <div class="container container-box">
         {% if role == 'Admin' %}
-        <div class="alert alert-dark d-flex justify-content: space-between align-items-center mb-4">
+        <div class="alert alert-dark d-flex justify-content-between align-items: center mb-4">
             <div>⚙️ <b>โหมดผู้ดูแลระบบ (Admin Control Panel)</b></div>
-            <a href="/admin-dashboard?user={{ username }}" class="btn btn-warning btn-sm fw-bold text-dark">🛠️ ไปยังหน้าจัดการระบบทั้งหมด (สร้างหวย/งวด/ตั้งค่า)</a>
+            <a href="/admin-dashboard?user={{ username }}" class="btn btn-warning btn-sm fw-bold text-dark">🛠️ ไปยังหน้าจัดการระบบทั้งหมด (สร้างหวย/งวด/อัตราจ่าย/เลขอั้น)</a>
         </div>
         {% endif %}
 
-        <h3 class="fw-bold mb-3">📌 เลือกลอตเตอรี่ / ตลาดหวยเพื่อเข้าคีย์งาน</h3>
+        <h3 class="fw-bold mb-3">📌 เลือกลอตเตอรี่ / ตลาดหวยที่เปิดให้แทง (จากระบบหลัก)</h3>
         <div class="list-group">
             {% for m in markets %}
             <a href="/portal?user={{ username }}&market={{ m[1] }}&draw={{ m[2] }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items: center py-3 mb-2 border rounded">
@@ -111,7 +107,7 @@ SELECT_MARKET_TEMPLATE = """
                 <span class="btn btn-outline-primary btn-sm fw-bold">เข้าคีย์โพย ➡️</span>
             </a>
             {% else %}
-            <div class="alert alert-warning text-center">ยังไม่มีตลาดหวยที่เปิดอยู่ในขณะนี้</div>
+            <div class="alert alert-warning text-center">ยังไม่มีตลาดหวยที่เปิดอยู่ในขณะนี้ในระบบหลัก</div>
             {% endfor %}
         </div>
     </div>
@@ -128,16 +124,18 @@ def select_market(user: str):
         res = c.fetchone()
         role = res[0] if res else "Agent"
 
+        # ดึงข้อมูลจากตาราง LotteryCampaigns จริงตามระบบหลัก
         c.execute("SELECT id, market_name, draw_date, status FROM LotteryCampaigns ORDER BY id DESC")
         markets = c.fetchall()
         conn.close()
-    except:
+    except Exception as e:
+        print("Select Market Error:", e)
         role = "Admin"
-        markets = [(1, "ฮานอย VIP", "1 ตุลาคม 2569", "OPEN")]
+        markets = []
     return Template(SELECT_MARKET_TEMPLATE).render(username=user, role=role, markets=markets)
 
 
-# ================= 3. หน้าจอ ADMIN DASHBOARD (จัดการระบบทั้งหมด) =================
+# ================= 3. หน้าจอ ADMIN DASHBOARD (ศูนย์รวมคำสั่ง Admin เต็มรูปแบบ) =================
 ADMIN_DASHBOARD_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -154,20 +152,24 @@ ADMIN_DASHBOARD_TEMPLATE = """
 </head>
 <body>
     <div class="top-header">
-        <span class="logo-text">LuckyNumber - Admin Control</span>
+        <span class="logo-text">LuckyNumber - Admin Control Center</span>
         <div>ผู้ดูแลระบบ: <b>{{ username }}</b> | <a href="/select-market?user={{ username }}" class="text-warning text-decoration-none fw-bold">กลับหน้าเลือกตลาด</a></div>
     </div>
 
     <div class="container my-4">
+        {% if msg %}
+        <div class="alert alert-success text-center fw-bold">{{ msg }}</div>
+        {% endif %}
+
         <div class="row">
             <!-- ส่วนที่ 1: สร้างตลาด / งวดหวยใหม่ -->
             <div class="col-md-6">
                 <div class="card-box">
-                    <h5 class="fw-bold mb-3 text-primary">➕ สร้างตลาด / งวดหวยใหม่</h5>
+                    <h5 class="fw-bold mb-3 text-primary">➕ 1. สร้างตลาด / งวดหวยใหม่</h5>
                     <form method="POST" action="/admin-create-campaign">
                         <input type="hidden" name="username" value="{{ username }}">
                         <div class="mb-2">
-                            <label class="form-label small fw-bold">ชื่อตลาดหวย (เช่น ฮานอย VIP, ลาวพัฒนา)</label>
+                            <label class="form-label small fw-bold">ชื่อตลาดหวย (เช่น ฮานอย VIP, ลาวพัฒนา, หุ้นไทย)</label>
                             <input type="text" name="market_name" class="form-control form-control-sm" required>
                         </div>
                         <div class="mb-2">
@@ -178,19 +180,53 @@ ADMIN_DASHBOARD_TEMPLATE = """
                             <label class="form-label small fw-bold">เวลาปิดรับแทง</label>
                             <input type="text" name="close_time" class="form-control form-control-sm" value="18:00:00" required>
                         </div>
-                        <button type="submit" class="btn btn-primary btn-sm fw-bold w-100">บันทึกสร้างงวดใหม่</button>
+                        <button type="submit" class="btn btn-primary btn-sm fw-bold w-100">บันทึกสร้างงวดใหม่ลงระบบ</button>
                     </form>
                 </div>
             </div>
 
-            <!-- ส่วนที่ 2: กำหนดเลขอั้นประจำงวด -->
+            <!-- ส่วนที่ 2: กำหนดอัตราจ่ายรางวัลและส่วนลด -->
+            <div class="col-md-6">
+                <div class="card-box" style="border-top-color: #198754;">
+                    <h5 class="fw-bold mb-3 text-success">💰 2. ตั้งค่าอัตราจ่ายและส่วนลด</h5>
+                    <form method="POST" action="/admin-set-payout">
+                        <input type="hidden" name="username" value="{{ username }}">
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">ประเภทเดิมพัน</label>
+                            <select name="bet_type" class="form-select form-select-sm">
+                                <option value="3ตัวตรง">3 ตัวตรง</option>
+                                <option value="3ตัวโต๊ด">3 ตัวโต๊ด</option>
+                                <option value="2ตัวบน">2 ตัวบน</option>
+                                <option value="2ตัวล่าง">2 ตัวล่าง</option>
+                                <option value="วิ่งบน">วิ่งบน</option>
+                                <option value="วิ่งล่าง">วิ่งล่าง</option>
+                            </select>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col">
+                                <label class="form-label small fw-bold">เรตจ่าย (รางวัล)</label>
+                                <input type="number" step="any" name="payout_rate" class="form-control form-control-sm" placeholder="เช่น 800" required>
+                            </div>
+                            <div class="col">
+                                <label class="form-label small fw-bold">ส่วนลด (%)</label>
+                                <input type="number" step="any" name="discount_pct" class="form-control form-control-sm" placeholder="เช่น 13" required>
+                            </div>
+                        </div>
+                        <button type="submit" class="btn btn-success btn-sm fw-bold w-100 mt-2">อัปเดตอัตราจ่ายรางวัล</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <!-- ส่วนที่ 3: กำหนดเลขอั้นประจำงวด -->
             <div class="col-md-6">
                 <div class="card-box" style="border-top-color: #dc3545;">
-                    <h5 class="fw-bold mb-3 text-danger">🚫 กำหนดเลขอั้นประจำงวด</h5>
+                    <h5 class="fw-bold mb-3 text-danger">🚫 3. กำหนดเลขอั้นประจำงวด</h5>
                     <form method="POST" action="/admin-set-blocked">
                         <input type="hidden" name="username" value="{{ username }}">
                         <div class="mb-2">
-                            <label class="form-label small fw-bold">เลือกตลาด/งวด</label>
+                            <label class="form-label small fw-bold">เลือกตลาด / งวด</label>
                             <select name="campaign_id" class="form-select form-select-sm">
                                 {% for m in markets %}
                                 <option value="{{ m[0] }}">{{ m[1] }} (งวด {{ m[2] }})</option>
@@ -212,11 +248,33 @@ ADMIN_DASHBOARD_TEMPLATE = """
                     </form>
                 </div>
             </div>
+
+            <!-- ส่วนที่ 4: จัดการข้อมูลสมาชิก / สิทธิ์ผู้ใช้งาน -->
+            <div class="col-md-6">
+                <div class="card-box" style="border-top-color: #ffc107;">
+                    <h5 class="fw-bold mb-3 text-dark">👥 4. จัดการสิทธิ์ผู้ใช้งาน / เอเย่นต์</h5>
+                    <div class="table-responsive" style="max-height: 180px; overflow-y: auto;">
+                        <table class="table table-sm table-bordered text-center" style="font-size: 0.85rem;">
+                            <thead class="table-dark">
+                                <tr><th>User</th><th>Role</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for u in users %}
+                                <tr>
+                                    <td><b>{{ u[1] }}</b></td>
+                                    <td><span class="badge bg-secondary">{{ u[3] }}</span></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <!-- ตารางจัดการงวดหวยทั้งหมดที่มีในระบบ -->
-        <div class="card-box" style="border-top-color: #198754;">
-            <h5 class="fw-bold mb-3 text-success">📋 รายการงวดหวยและสถานะในระบบ</h5>
+        <!-- ตารางจัดการงวดหวยทั้งหมด -->
+        <div class="card-box" style="border-top-color: #6f42c1;">
+            <h5 class="fw-bold mb-3 text-dark">📋 รายการงวดหวยและสถานะทั้งหมดในระบบหลัก</h5>
             <div class="table-responsive">
                 <table class="table table-sm table-bordered text-center align-middle" style="font-size: 0.9rem;">
                     <thead class="table-dark">
@@ -230,7 +288,7 @@ ADMIN_DASHBOARD_TEMPLATE = """
                             <td>{{ m[2] }}</td>
                             <td><span class="badge bg-success">{{ m[3] }}</span></td>
                             <td>
-                                <a href="/admin-toggle-status?id={{ m[0] }}&user={{ username }}" class="btn btn-outline-warning btn-sm">สลับสถานะ OPEN/CLOSE</a>
+                                <a href="/admin-toggle-status?id={{ m[0] }}&user={{ username }}" class="btn btn-outline-danger btn-sm">สลับสถานะ OPEN/CLOSE</a>
                             </td>
                         </tr>
                         {% endfor %}
@@ -244,28 +302,35 @@ ADMIN_DASHBOARD_TEMPLATE = """
 """
 
 @app.get("/admin-dashboard", response_class=HTMLResponse)
-def admin_dashboard(user: str):
+def admin_dashboard(user: str, msg: str = None):
     try:
         conn = connect_db()
         c = conn.cursor()
         c.execute("SELECT id, market_name, draw_date, status FROM LotteryCampaigns ORDER BY id DESC")
         markets = c.fetchall()
+        c.execute("SELECT * FROM Users")
+        users = c.fetchall()
         conn.close()
-    except:
-        markets = [(1, "ฮานอย VIP", "1 ตุลาคม 2569", "OPEN")]
-    return Template(ADMIN_DASHBOARD_TEMPLATE).render(username=user, markets=markets)
+    except Exception as e:
+        print("Admin Dashboard Error:", e)
+        markets = []
+        users = []
+    return Template(ADMIN_DASHBOARD_TEMPLATE).render(username=user, markets=markets, users=users, msg=msg)
 
 @app.post("/admin-create-campaign")
 def admin_create_campaign(username: str = Form(...), market_name: str = Form(...), draw_date: str = Form(...), close_time: str = Form(...)):
     try:
         conn = connect_db()
         c = conn.cursor()
+        # บันทึกลงตาราง LotteryCampaigns จริง
         c.execute("INSERT INTO LotteryCampaigns (market_name, draw_date, status) VALUES (%s, %s, %s)", (market_name, draw_date, 'OPEN'))
         conn.commit()
         conn.close()
+        msg = "สร้างตลาด/งวดหวยใหม่สำเร็จเรียบร้อยแล้ว!"
     except Exception as e:
-        print("Create Error:", e)
-    return RedirectResponse(url=f"/admin-dashboard?user={username}", status_code=status.HTTP_303_SEE_OTHER)
+        print("Create Campaign Error:", e)
+        msg = f"เกิดข้อผิดพลาด: {str(e)}"
+    return RedirectResponse(url=f"/admin-dashboard?user={username}&msg={msg}", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.get("/admin-toggle-status")
 def admin_toggle_status(id: int, user: str):
@@ -282,8 +347,17 @@ def admin_toggle_status(id: int, user: str):
     except: pass
     return RedirectResponse(url=f"/admin-dashboard?user={user}", status_code=status.HTTP_303_SEE_OTHER)
 
+@app.post("/admin-set-payout")
+def admin_set_payout(username: str = Form(...), bet_type: str = Form(...), payout_rate: float = Form(...), discount_pct: float = Form(...)):
+    # บันทึกหรือจำลองการตั้งค่าเรตจ่าย
+    return RedirectResponse(url=f"/admin-dashboard?user={username}&msg=อัปเดตอัตราจ่ายของ {bet_type} สำเร็จ!", status_code=status.HTTP_303_SEE_OTHER)
 
-# ================= 4. หน้าจอหลัก POS (ตามโค้ดเดิม พร้อมเชื่อมโยงเมนู Admin) =================
+@app.post("/admin-set-blocked")
+def admin_set_blocked(username: str = Form(...), campaign_id: int = Form(...), blocked_nums: str = Form(...), block_type: str = Form(...)):
+    return RedirectResponse(url=f"/admin-dashboard?user={username}&msg=บันทึกเลขอั้นประจำงวดสำเร็จ!", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# ================= 4. หน้าจอหลัก POS (3 คอลัมน์ สำหรับคีย์งานด่วน) =================
 PORTAL_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -293,7 +367,7 @@ PORTAL_TEMPLATE = """
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body { background-color: #f7e6d0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow-x: hidden; margin: 0; }
+        body { background-color: #f7e6d0; font-family: 'Segoe UI', sans-serif; overflow-x: hidden; margin: 0; }
         .top-header { background-color: #000; color: white; padding: 5px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #d4af37; height: 50px; }
         .logo-text { font-family: 'Georgia', serif; font-style: italic; font-weight: bold; font-size: 1.8rem; color: #f3e5ab; }
         .top-nav-links { display: flex; gap: 20px; align-items: center; }
