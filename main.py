@@ -2,7 +2,7 @@ from fastapi import FastAPI, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Template
 import psycopg2
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = FastAPI(title="LuckyNumber Agent Portal - Production Ready")
 
@@ -11,6 +11,9 @@ DB_URI = "postgresql://postgres.mpyswshlrxwpirzdexrn:Clublifekorat3888@aws-0-ap-
 
 def connect_db():
     return psycopg2.connect(DB_URI)
+
+def get_thai_time():
+    return datetime.utcnow() + timedelta(hours=7)
 
 # ================= 1. หน้าจอ LOGIN =================
 LOGIN_TEMPLATE = """
@@ -91,7 +94,7 @@ SELECT_MARKET_TEMPLATE = """
     </div>
     <div class="container container-box">
         {% if role == 'Admin' %}
-        <div class="alert alert-dark d-flex justify-content-between align-items: center mb-4">
+        <div class="alert alert-dark d-flex justify-content-between align-items-center mb-4">
             <div>⚙️ <b>โหมดผู้ดูแลระบบ (Admin Control Panel)</b></div>
             <a href="/admin-dashboard?user={{ username }}" class="btn btn-warning btn-sm fw-bold text-dark">🛠️ ไปยังหน้าจัดการระบบทั้งหมด (สร้างงวด/เลขอั้น)</a>
         </div>
@@ -102,7 +105,7 @@ SELECT_MARKET_TEMPLATE = """
             {% for m in markets %}
             <a href="/portal?user={{ username }}&market={{ m[1] }}&draw={{ m[2] }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items: center py-3 mb-2 border rounded">
                 <div>
-                    <h5 class="mb-1 text-primary fw-bold">🇻🇳 {{ m[1] }}</h5>
+                    <h5 class="mb-1 text-primary fw-bold">🎟️ {{ m[1] }}</h5>
                     <small class="text-muted">งวดประจำวันที่: {{ m[2] }} | สถานะ: <span class="badge bg-success">{{ m[3] }}</span></small>
                 </div>
                 <span class="btn btn-outline-primary btn-sm fw-bold">เข้าคีย์โพย ➡️</span>
@@ -125,8 +128,8 @@ def select_market(user: str):
         res = c.fetchone()
         role = res[0] if res else "Agent"
 
-        # ดึงข้อมูลจากตาราง LotteryCampaigns กรองเฉพาะงวดที่เปิด OPEN
-        c.execute("SELECT id, market_name, draw_date, status FROM LotteryCampaigns WHERE status='OPEN' ORDER BY id DESC")
+        # ดึงข้อมูลจากตาราง LotteryCampaigns (ใช้ column: lotto_name, draw_date, status='Active') ตามระบบหลัก
+        c.execute("SELECT id, lotto_name, draw_date, status FROM LotteryCampaigns WHERE status='Active' ORDER BY id DESC")
         markets = c.fetchall()
         conn.close()
     except Exception as e:
@@ -170,11 +173,15 @@ ADMIN_DASHBOARD_TEMPLATE = """
                         <input type="hidden" name="username" value="{{ username }}">
                         <div class="mb-2">
                             <label class="form-label small fw-bold">ชื่อตลาดหวย</label>
-                            <input type="text" name="market_name" class="form-control form-control-sm" required>
+                            <input type="text" name="lotto_name" class="form-control form-control-sm" placeholder="เช่น หวยรัฐบาล, หวยลาว" required>
                         </div>
                         <div class="mb-2">
                             <label class="form-label small fw-bold">งวดประจำวันที่</label>
-                            <input type="text" name="draw_date" class="form-control form-control-sm" placeholder="เช่น 1 ตุลาคม 2569" required>
+                            <input type="text" name="draw_date" class="form-control form-control-sm" placeholder="เช่น 16 ตุลาคม 2026" required>
+                        </div>
+                        <div class="mb-2">
+                            <label class="form-label small fw-bold">เวลาปิดรับแทง (Close Time)</label>
+                            <input type="datetime-local" name="close_time" class="form-control form-control-sm" required>
                         </div>
                         <button type="submit" class="btn btn-primary btn-sm fw-bold w-100 mt-2">บันทึกสร้างงวดใหม่</button>
                     </form>
@@ -188,9 +195,9 @@ ADMIN_DASHBOARD_TEMPLATE = """
                         <input type="hidden" name="username" value="{{ username }}">
                         <div class="mb-2">
                             <label class="form-label small fw-bold">เลือกตลาด / งวด</label>
-                            <select name="campaign_id" class="form-select form-select-sm">
+                            <select name="draw_date_target" class="form-select form-select-sm">
                                 {% for m in markets %}
-                                <option value="{{ m[0] }}">{{ m[1] }} (งวด {{ m[2] }})</option>
+                                <option value="{{ m[2] }}">{{ m[1] }} (งวด {{ m[2] }})</option>
                                 {% endfor %}
                             </select>
                         </div>
@@ -217,9 +224,9 @@ ADMIN_DASHBOARD_TEMPLATE = """
                             <td>{{ m[0] }}</td>
                             <td class="fw-bold">{{ m[1] }}</td>
                             <td>{{ m[2] }}</td>
-                            <td><span class="badge bg-success">{{ m[3] }}</span></td>
+                            <td><span class="badge {% if m[3] == 'Active' %}bg-success{% else %}bg-secondary{% endif %}">{{ m[3] }}</span></td>
                             <td>
-                                <a href="/admin-toggle-status?id={{ m[0] }}&user={{ username }}" class="btn btn-outline-danger btn-sm">สลับสถานะ OPEN/CLOSE</a>
+                                <a href="/admin-toggle-status?id={{ m[0] }}&user={{ username }}" class="btn btn-outline-danger btn-sm">สลับสถานะ Active/Closed</a>
                             </td>
                         </tr>
                         {% endfor %}
@@ -237,7 +244,7 @@ def admin_dashboard(user: str, msg: str = None):
     try:
         conn = connect_db()
         c = conn.cursor()
-        c.execute("SELECT id, market_name, draw_date, status FROM LotteryCampaigns ORDER BY id DESC")
+        c.execute("SELECT id, lotto_name, draw_date, status FROM LotteryCampaigns ORDER BY id DESC")
         markets = c.fetchall()
         conn.close()
     except:
@@ -245,11 +252,11 @@ def admin_dashboard(user: str, msg: str = None):
     return Template(ADMIN_DASHBOARD_TEMPLATE).render(username=user, markets=markets, msg=msg)
 
 @app.post("/admin-create-campaign")
-def admin_create_campaign(username: str = Form(...), market_name: str = Form(...), draw_date: str = Form(...)):
+def admin_create_campaign(username: str = Form(...), lotto_name: str = Form(...), draw_date: str = Form(...), close_time: str = Form(...)):
     try:
         conn = connect_db()
         c = conn.cursor()
-        c.execute("INSERT INTO LotteryCampaigns (market_name, draw_date, status) VALUES (%s, %s, %s)", (market_name, draw_date, 'OPEN'))
+        c.execute("INSERT INTO LotteryCampaigns (lotto_name, draw_date, status, close_time) VALUES (%s, %s, 'Active', %s)", (lotto_name, draw_date, close_time))
         conn.commit()
         conn.close()
         msg = "สร้างตลาด/งวดหวยใหม่สำเร็จ!"
@@ -265,7 +272,7 @@ def admin_toggle_status(id: int, user: str):
         c.execute("SELECT status FROM LotteryCampaigns WHERE id=%s", (id,))
         res = c.fetchone()
         if res:
-            new_status = 'CLOSED' if res[0] == 'OPEN' else 'OPEN'
+            new_status = 'Closed' if res[0] == 'Active' else 'Active'
             c.execute("UPDATE LotteryCampaigns SET status=%s WHERE id=%s", (new_status, id))
             conn.commit()
         conn.close()
@@ -273,8 +280,20 @@ def admin_toggle_status(id: int, user: str):
     return RedirectResponse(url=f"/admin-dashboard?user={user}", status_code=status.HTTP_303_SEE_OTHER)
 
 @app.post("/admin-set-blocked")
-def admin_set_blocked(username: str = Form(...), campaign_id: int = Form(...), blocked_nums: str = Form(...)):
-    return RedirectResponse(url=f"/admin-dashboard?user={username}&msg=บันทึกเลขอั้นเรียบร้อย!", status_code=status.HTTP_303_SEE_OTHER)
+def admin_set_blocked(username: str = Form(...), draw_date_target: str = Form(...), blocked_nums: str = Form(...)):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        nums = [n.strip() for n in blocked_nums.split(',') if n.strip()]
+        for num_str in nums:
+            t_val = "3ตัว" if len(num_str) == 3 else ("2ตัว" if len(num_str) == 2 else "อื่นๆ")
+            c.execute("INSERT INTO BlockedNumbers (draw_date, raw_num, status, type, is_raw) VALUES (%s, %s, 'ปิดรับ', %s, TRUE)", (draw_date_target, num_str, t_val))
+        conn.commit()
+        conn.close()
+        msg = "บันทึกเลขอั้นเรียบร้อย!"
+    except Exception as e:
+        msg = f"Error: {str(e)}"
+    return RedirectResponse(url=f"/admin-dashboard?user={username}&msg={msg}", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # ================= 4. หน้าจอหลัก POS (3 คอลัมน์ คีย์ด่วน) =================
@@ -395,9 +414,8 @@ PORTAL_TEMPLATE = """
                 <table class="table table-bordered rate-table text-center">
                     <thead><tr><th>ประเภท</th><th>รางวัล</th><th>ส่วนลด</th></tr></thead>
                     <tbody>
-                        <tr><td>3ตัวตรง</td><td>800</td><td>13%</td></tr>
-                        <tr><td>2ตัวบน</td><td>95</td><td>5%</td></tr>
-                        <tr><td>2ตัวล่าง</td><td>95</td><td>5%</td></tr>
+                        <tr><td>3ตัวตรง</td><td>500</td><td>0%</td></tr>
+                        <tr><td>2ตัวบน/ล่าง</td><td>70</td><td>0%</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -411,7 +429,7 @@ PORTAL_TEMPLATE = """
 
         <div class="content-center">
             <div class="market-banner">
-                <div>🇻🇳 {{ market }} งวดประจำวันที่ {{ draw_date }}</div>
+                <div>🎟️ {{ market }} งวดประจำวันที่ {{ draw_date }}</div>
                 <div>สถานะระบบ: <span class="text-warning">เปิดรับแทงปกติ</span></div>
             </div>
 
@@ -494,7 +512,7 @@ PORTAL_TEMPLATE = """
                 <div class="text-center bg-dark text-white fw-bold py-1 mb-2" style="font-size: 0.85rem;">เลขอั้นประจำงวด</div>
                 <div class="mb-2">
                     <div class="small fw-bold text-dark">รายการเลขอั้น:</div>
-                    <input type="text" class="form-control form-control-sm bg-light text-danger fw-bold" value="379, 528" readonly>
+                    <input type="text" class="form-control form-control-sm bg-light text-danger fw-bold" value="{{ blocked_display }}" readonly>
                 </div>
             </div>
 
@@ -508,11 +526,11 @@ PORTAL_TEMPLATE = """
                         <tbody>
                             {% for tx in recent_transactions %}
                             <tr>
-                                <td><small>{{ tx[1][11:16] }}</small></td>
-                                <td><code>{{ tx[6][-6:] }}</code></td>
-                                <td><b>{{ tx[7] }}</b></td>
-                                <td>{{ "{:,.0f}".format(tx[9] | float) if 'บน' in tx[8] or 'ตรง' in tx[8] else '-' }}</td>
-                                <td>{{ "{:,.0f}".format(tx[9] | float) if 'ล่าง' in tx[8] or 'โต๊ด' in tx[8] else '-' }}</td>
+                                <td><small>{{ tx[2][11:16] if tx[2] and len(tx[2]) >= 16 else '-' }}</small></td>
+                                <td><code>{{ tx[7][-6:] if tx[7] else '-' }}</code></td>
+                                <td><b>{{ tx[8] }}</b></td>
+                                <td>{{ "{:,.0f}".format(tx[10] | float) if 'บน' in tx[9] or 'ตรง' in tx[9] else '-' }}</td>
+                                <td>{{ "{:,.0f}".format(tx[10] | float) if 'ล่าง' in tx[9] or 'โต๊ด' in tx[9] else '-' }}</td>
                                 <td class="fw-bold text-success">{{ "{:,.1f}".format(tx[12] | float) }}</td>
                             </tr>
                             {% else %}
@@ -542,10 +560,16 @@ def portal_page(user: str, market: str, draw: str):
 
         c.execute("SELECT * FROM Transactions WHERE draw_date = %s ORDER BY id DESC LIMIT 15", (draw,))
         recent_transactions = c.fetchall()
+
+        # ดึงเลขอั้นจากตาราง BlockedNumbers ของระบบหลัก
+        c.execute("SELECT raw_num FROM BlockedNumbers WHERE draw_date = %s", (draw,))
+        b_rows = c.fetchall()
+        blocked_display = ", ".join([str(r[0]) for r in b_rows]) if b_rows else "ไม่มีเลขอั้น"
+
         conn.close()
 
         return Template(PORTAL_TEMPLATE).render(
-            username=user, role=role, market=market, draw_date=draw, drafts=drafts, recent_transactions=recent_transactions
+            username=user, role=role, market=market, draw_date=draw, drafts=drafts, recent_transactions=recent_transactions, blocked_display=blocked_display
         )
     except Exception as e:
         return f"Portal Error: {str(e)}"
@@ -567,17 +591,17 @@ def portal_add_draft(
             if length == 3:
                 if top_amt > 0:
                     c.execute("INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                              (user, 1, 'Customer', n, top_amt, '3ตัวตรง', 800, top_amt * 0.13, top_amt * 0.87, 'ปกติ'))
+                              (user, 1, 'Customer', n, top_amt, '3ตัวตรง', 500, 0, top_amt, 'ปกติ'))
                 if bot_amt > 0:
                     c.execute("INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                              (user, 1, 'Customer', n, bot_amt, '3ตัวโต๊ด', 125, bot_amt * 0.13, bot_amt * 0.87, 'ปกติ'))
+                              (user, 1, 'Customer', n, bot_amt, '3ตัวโต๊ด', 100, 0, bot_amt, 'ปกติ'))
             elif length == 2:
                 if top_amt > 0:
                     c.execute("INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                              (user, 1, 'Customer', n, top_amt, '2ตัวบน', 95, top_amt * 0.05, top_amt * 0.95, 'ปกติ'))
+                              (user, 1, 'Customer', n, top_amt, '2ตัวบน', 70, 0, top_amt, 'ปกติ'))
                 if bot_amt > 0:
                     c.execute("INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                              (user, 1, 'Customer', n, bot_amt, '2ตัวล่าง', 95, bot_amt * 0.05, bot_amt * 0.95, 'ปกติ'))
+                              (user, 1, 'Customer', n, bot_amt, '2ตัวล่าง', 70, 0, bot_amt, 'ปกติ'))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -610,16 +634,17 @@ def portal_clear_draft(user: str, market: str, draw: str):
 def portal_confirm_bill(user: str = Form(...), market: str = Form(...), draw: str = Form(...)):
     try:
         conn = connect_db()
+        c = conn.cursor()
         c.execute("SELECT num, type, amt_teng, payout_rate, discount, net, status FROM TempDraft WHERE username=%s", (user,))
         drafts = c.fetchall()
         if drafts:
-            bill_no = f"BILL-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            bill_no = f"TH-{get_thai_time().strftime('%d%m%y')}-1-B{get_thai_time().strftime('%H%M%S')}"
+            ts = get_thai_time().strftime("%d/%m/%Y %H:%M:%S")
             c_write = connect_db()
             cw = c_write.cursor()
             for n, t_type, amt, rate, disc, net_val, status_val in drafts:
-                cw.execute("INSERT INTO Transactions (draw_date, timestamp, username, customer_id, customer_name, customer_type, bill_no, num, type, amount, status, discount, net, payout_rate) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", 
-                           (draw, ts, user, 1, "ลูกค้ารายย่อย", "Customer", bill_no, n, t_type, float(amt), status_val, float(disc), float(net_val), float(rate)))
+                cw.execute("INSERT INTO Transactions (draw_date, timestamp, username, customer_id, customer_name, customer_type, bill_no, num, type, amount, status, discount, net, payout_rate, lotto_name) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", 
+                           (draw, ts, user, 1, "ลูกค้ารายย่อย", "Customer", bill_no, n, t_type, float(amt), status_val, float(disc), float(net_val), float(rate), market))
             cw.execute("DELETE FROM TempDraft WHERE username=%s", (user,))
             c_write.commit()
             c_write.close()
