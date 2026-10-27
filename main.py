@@ -494,12 +494,12 @@ PORTAL_TEMPLATE = """
                         <tbody>
                             {% for tx in recent_transactions %}
                             <tr>
-                                <td><small>{{ tx[2][11:16] if tx[2] and tx[2]|length >= 16 else '-' }}</small></td>
-                                <td><code>{{ tx[7][-6:] if tx[7] else '-' }}</code></td>
-                                <td><b>{{ tx[8] }}</b></td>
-                                <td>{{ "{:,.0f}".format(tx[10] | float) if 'บน' in tx[9] or 'ตรง' in tx[9] else '-' }}</td>
-                                <td>{{ "{:,.0f}".format(tx[10] | float) if 'ล่าง' in tx[9] or 'โต๊ด' in tx[9] else '-' }}</td>
-                                <td class="fw-bold text-success">{{ "{:,.1f}".format(tx[12] | float) }}</td>
+                                <td><small>{{ tx[0][11:16] if tx[0] and tx[0]|length >= 16 else '-' }}</small></td>
+                                <td><code>{{ tx[1][-6:] if tx[1] else '-' }}</code></td>
+                                <td><b>{{ tx[2] }}</b></td>
+                                <td>{{ "{:,.0f}".format(tx[4] | float) if 'บน' in tx[3] or 'ตรง' in tx[3] else '-' }}</td>
+                                <td>{{ "{:,.0f}".format(tx[4] | float) if 'ล่าง' in tx[3] or 'โต๊ด' in tx[3] else '-' }}</td>
+                                <td class="fw-bold text-success">{{ "{:,.1f}".format(tx[5] | float) }}</td>
                             </tr>
                             {% else %}
                             <tr><td colspan="6" class="text-muted">ยังไม่มีรายการ</td></tr>
@@ -520,7 +520,6 @@ def portal_page(user: str, market: str, draw: str):
         conn = connect_db()
         c = conn.cursor()
         
-        # ดึงอัตราจ่ายและส่วนลดจริงของ User/Agent คนนี้จากตาราง Users
         c.execute("SELECT role, disc_total, disc_3d, disc_2d, disc_run, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot FROM Users WHERE username=%s", (user,))
         user_res = c.fetchone()
         role = user_res[0] if user_res else "Agent"
@@ -534,7 +533,8 @@ def portal_page(user: str, market: str, draw: str):
         c.execute("SELECT id, num, amt_teng, status, type, payout_rate, discount, net FROM TempDraft WHERE username=%s", (user,))
         drafts = c.fetchall()
 
-        c.execute("SELECT * FROM Transactions WHERE draw_date = %s OR draw_date ILIKE %s ORDER BY id DESC LIMIT 15", (draw, f"%{draw}%"))
+        # แก้ไขให้ดึงเฉพาะคอลัมน์ที่จำเป็นแบบชัดเจน ป้องกันปัญหา Index คลาดเคลื่อน
+        c.execute("SELECT timestamp, bill_no, num, type, amount, net FROM Transactions WHERE draw_date = %s OR draw_date ILIKE %s ORDER BY id DESC LIMIT 15", (draw, f"%{draw}%"))
         recent_transactions = c.fetchall()
 
         b_closed, b_3d, b_2d = get_blocked_display_data(draw)
@@ -564,7 +564,6 @@ def portal_add_draft(
         conn = connect_db()
         c = conn.cursor()
         
-        # ดึงส่วนลดและอัตราจ่ายจริงของ User มาใช้คำนวณส่วนลดและยอดสุทธิ
         c.execute("SELECT disc_total, disc_3d, disc_2d, disc_run, pay_3d, pay_3tod, pay_2d FROM Users WHERE username=%s", (user,))
         u_res = c.fetchone()
         disc_total = float(u_res[0] or 0) if u_res else 0.0
