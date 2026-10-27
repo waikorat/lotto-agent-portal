@@ -558,11 +558,12 @@ def portal_page(user: str, market: str, draw: str):
         c.execute("SELECT id, num, amt_teng, status, type, payout_rate, discount, net FROM TempDraft WHERE username=%s", (user,))
         drafts = c.fetchall()
 
-        c.execute("SELECT * FROM Transactions WHERE draw_date = %s ORDER BY id DESC LIMIT 15", (draw,))
+        # ปรับการค้นหาประวัติการทำรายการให้รองรับการค้นหาแบบยืดหยุ่น
+        c.execute("SELECT * FROM Transactions WHERE draw_date = %s OR draw_date ILIKE %s ORDER BY id DESC LIMIT 15", (draw, f"%{draw}%"))
         recent_transactions = c.fetchall()
 
-        # ดึงเลขอั้นจากตาราง BlockedNumbers ของระบบหลัก
-        c.execute("SELECT raw_num FROM BlockedNumbers WHERE draw_date = %s", (draw,))
+        # แก้ไขจุดที่ดึงเลขอั้น: ใช้เงื่อนไข ILIKE และกรองเฉพาะ is_raw = TRUE (เหมือนระบบหลัก) เพื่อให้ดึงข้อมูลตรงกัน 100%
+        c.execute("SELECT raw_num FROM BlockedNumbers WHERE (draw_date = %s OR draw_date ILIKE %s) AND is_raw = TRUE", (draw, f"%{draw}%"))
         b_rows = c.fetchall()
         blocked_display = ", ".join([str(r[0]) for r in b_rows]) if b_rows else "ไม่มีเลขอั้น"
 
