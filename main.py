@@ -15,6 +15,10 @@ def connect_db():
 def get_thai_time():
     return datetime.utcnow() + timedelta(hours=7)
 
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
 # ================= 1. หน้าจอ LOGIN =================
 LOGIN_TEMPLATE = """
 <!DOCTYPE html>
@@ -128,7 +132,6 @@ def select_market(user: str):
         res = c.fetchone()
         role = res[0] if res else "Agent"
 
-        # ดึงข้อมูลจากตาราง LotteryCampaigns (ใช้ column: lotto_name, draw_date, status='Active') ตามระบบหลัก
         c.execute("SELECT id, lotto_name, draw_date, status FROM LotteryCampaigns WHERE status='Active' ORDER BY id DESC")
         markets = c.fetchall()
         conn.close()
@@ -164,52 +167,6 @@ ADMIN_DASHBOARD_TEMPLATE = """
         {% if msg %}
         <div class="alert alert-success text-center fw-bold">{{ msg }}</div>
         {% endif %}
-
-        <div class="row">
-            <div class="col-md-6">
-                <div class="card-box">
-                    <h5 class="fw-bold mb-3 text-primary">➕ 1. สร้างตลาด / งวดหวยใหม่</h5>
-                    <form method="POST" action="/admin-create-campaign">
-                        <input type="hidden" name="username" value="{{ username }}">
-                        <div class="mb-2">
-                            <label class="form-label small fw-bold">ชื่อตลาดหวย</label>
-                            <input type="text" name="lotto_name" class="form-control form-control-sm" placeholder="เช่น หวยรัฐบาล, หวยลาว" required>
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label small fw-bold">งวดประจำวันที่</label>
-                            <input type="text" name="draw_date" class="form-control form-control-sm" placeholder="เช่น 16 ตุลาคม 2026" required>
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label small fw-bold">เวลาปิดรับแทง (Close Time)</label>
-                            <input type="datetime-local" name="close_time" class="form-control form-control-sm" required>
-                        </div>
-                        <button type="submit" class="btn btn-primary btn-sm fw-bold w-100 mt-2">บันทึกสร้างงวดใหม่</button>
-                    </form>
-                </div>
-            </div>
-
-            <div class="col-md-6">
-                <div class="card-box" style="border-top-color: #dc3545;">
-                    <h5 class="fw-bold mb-3 text-danger">🚫 2. กำหนดเลขอั้นประจำงวด</h5>
-                    <form method="POST" action="/admin-set-blocked">
-                        <input type="hidden" name="username" value="{{ username }}">
-                        <div class="mb-2">
-                            <label class="form-label small fw-bold">เลือกตลาด / งวด</label>
-                            <select name="draw_date_target" class="form-select form-select-sm">
-                                {% for m in markets %}
-                                <option value="{{ m[2] }}">{{ m[1] }} (งวด {{ m[2] }})</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        <div class="mb-2">
-                            <label class="form-label small fw-bold">รายการเลขอั้น (, คั่น)</label>
-                            <input type="text" name="blocked_nums" class="form-control form-control-sm" placeholder="เช่น 379, 528" required>
-                        </div>
-                        <button type="submit" class="btn btn-danger btn-sm fw-bold w-100 mt-2">บันทึกเลขอั้น</button>
-                    </form>
-                </div>
-            </div>
-        </div>
 
         <div class="card-box" style="border-top-color: #198754;">
             <h5 class="fw-bold mb-3 text-success">📋 รายการงวดหวยทั้งหมดในระบบหลัก</h5>
@@ -251,19 +208,6 @@ def admin_dashboard(user: str, msg: str = None):
         markets = []
     return Template(ADMIN_DASHBOARD_TEMPLATE).render(username=user, markets=markets, msg=msg)
 
-@app.post("/admin-create-campaign")
-def admin_create_campaign(username: str = Form(...), lotto_name: str = Form(...), draw_date: str = Form(...), close_time: str = Form(...)):
-    try:
-        conn = connect_db()
-        c = conn.cursor()
-        c.execute("INSERT INTO LotteryCampaigns (lotto_name, draw_date, status, close_time) VALUES (%s, %s, 'Active', %s)", (lotto_name, draw_date, close_time))
-        conn.commit()
-        conn.close()
-        msg = "สร้างตลาด/งวดหวยใหม่สำเร็จ!"
-    except Exception as e:
-        msg = f"Error: {str(e)}"
-    return RedirectResponse(url=f"/admin-dashboard?user={username}&msg={msg}", status_code=status.HTTP_303_SEE_OTHER)
-
 @app.get("/admin-toggle-status")
 def admin_toggle_status(id: int, user: str):
     try:
@@ -279,21 +223,39 @@ def admin_toggle_status(id: int, user: str):
     except: pass
     return RedirectResponse(url=f"/admin-dashboard?user={user}", status_code=status.HTTP_303_SEE_OTHER)
 
-@app.post("/admin-set-blocked")
-def admin_set_blocked(username: str = Form(...), draw_date_target: str = Form(...), blocked_nums: str = Form(...)):
+
+# ================= Helper สำหรับดึงเลขอั้นแยก 3 กรอบ =================
+def get_blocked_display_data(draw_date):
     try:
         conn = connect_db()
         c = conn.cursor()
-        nums = [n.strip() for n in blocked_nums.split(',') if n.strip()]
-        for num_str in nums:
-            t_val = "3ตัว" if len(num_str) == 3 else ("2ตัว" if len(num_str) == 2 else "อื่นๆ")
-            c.execute("INSERT INTO BlockedNumbers (draw_date, raw_num, status, type, is_raw) VALUES (%s, %s, 'ปิดรับ', %s, TRUE)", (draw_date_target, num_str, t_val))
-        conn.commit()
+        c.execute("SELECT raw_num, status, type FROM BlockedNumbers WHERE (draw_date = %s OR draw_date ILIKE %s) AND is_raw = TRUE", (draw_date, f"%{draw_date}%"))
+        rows = c.fetchall()
+        if not rows:
+            c.execute("SELECT raw_num, status, type FROM BlockedNumbers WHERE (draw_date = %s OR draw_date ILIKE %s)", (draw_date, f"%{draw_date}%"))
+            rows = c.fetchall()
         conn.close()
-        msg = "บันทึกเลขอั้นเรียบร้อย!"
-    except Exception as e:
-        msg = f"Error: {str(e)}"
-    return RedirectResponse(url=f"/admin-dashboard?user={username}&msg={msg}", status_code=status.HTTP_303_SEE_OTHER)
+        l_c, l_3, l_2 = [], [], []
+        seen_c, seen_3, seen_2 = set(), set(), set()
+        for r_num, status_val, type_val in rows:
+            if not r_num: continue
+            num_str = str(r_num).strip()
+            if status_val == "ปิดรับ":
+                if num_str not in seen_c:
+                    seen_c.add(num_str)
+                    l_c.append(num_str)
+            else:
+                if len(num_str) == 3 or type_val == "3ตัว":
+                    if num_str not in seen_3:
+                        seen_3.add(num_str)
+                        l_3.append(num_str)
+                elif len(num_str) == 2 or type_val == "2ตัว":
+                    if num_str not in seen_2:
+                        seen_2.add(num_str)
+                        l_2.append(num_str)
+        return ", ".join(l_c), ", ".join(l_3), ", ".join(l_2)
+    except:
+        return "", "", ""
 
 
 # ================= 4. หน้าจอหลัก POS (3 คอลัมน์ คีย์ด่วน) =================
@@ -325,7 +287,6 @@ PORTAL_TEMPLATE = """
         .preview-box { background-color: #ccfeff; border: 2px solid #0dcaf0; padding: 10px; border-radius: 6px; font-family: monospace; font-weight: bold; font-size: 1.05rem; color: #000; margin-bottom: 12px; min-height: 45px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
         .entry-form-box { background-color: rgba(255,255,255,0.6); padding: 10px; border-radius: 6px; margin-bottom: 15px; border: 1px solid #ccc; }
         .sidebar-right { width: 320px; background-color: rgba(255,255,255,0.4); border-left: 2px solid #d4af37; padding: 15px; flex-shrink: 0; overflow-y: auto; }
-        .blocked-box { border: 2px solid #dc3545; background-color: #fff; margin-bottom: 15px; border-radius: 4px; }
         .recent-table th, .recent-table td { font-size: 0.75rem; padding: 4px !important; text-align: center; }
     </style>
     <script>
@@ -507,13 +468,19 @@ PORTAL_TEMPLATE = """
             </div>
         </div>
 
+        <!-- 3 กรอบเลขอั้นแบบแยกหมวดหมู่ -->
         <div class="sidebar-right">
-            <div class="blocked-box p-2">
-                <div class="text-center bg-dark text-white fw-bold py-1 mb-2" style="font-size: 0.85rem;">เลขอั้นประจำงวด</div>
-                <div class="mb-2">
-                    <div class="small fw-bold text-dark">รายการเลขอั้น:</div>
-                    <input type="text" class="form-control form-control-sm bg-light text-danger fw-bold" value="{{ blocked_display }}" readonly>
-                </div>
+            <div class="card shadow-sm p-3 bg-white mb-4 border">
+                <h6 class="text-center fw-bold text-danger mb-3">🚫 รายการเลขอั้นประจำงวด</h6>
+                
+                <label class="fw-bold text-dark mb-1 small">เลขอั้นปิดรับ:</label>
+                <textarea class="form-control form-control-sm mb-2 bg-light text-danger fw-bold" rows="2" readonly>{{ block_closed }}</textarea>
+                
+                <label class="fw-bold text-dark mb-1 small">เลขอั้น 3ตัว (จ่ายครึ่ง):</label>
+                <textarea class="form-control form-control-sm mb-2 bg-light text-dark" rows="2" readonly>{{ block_3d }}</textarea>
+                
+                <label class="fw-bold text-dark mb-1 small">เลขอั้น 2ตัว (จ่ายครึ่ง):</label>
+                <textarea class="form-control form-control-sm bg-light text-dark" rows="2" readonly>{{ block_2d }}</textarea>
             </div>
 
             <div class="card shadow-sm p-2 bg-white">
@@ -558,19 +525,18 @@ def portal_page(user: str, market: str, draw: str):
         c.execute("SELECT id, num, amt_teng, status, type, payout_rate, discount, net FROM TempDraft WHERE username=%s", (user,))
         drafts = c.fetchall()
 
-        # ปรับการค้นหาประวัติการทำรายการให้รองรับการค้นหาแบบยืดหยุ่น
-        c.execute("SELECT * FROM Transactions WHERE draw_date = %s OR draw_date ILIKE %s ORDER BY id DESC LIMIT 15", (draw, f"%{draw}%"))
+        c.execute("SELECT * FROM Transactions WHERE draw_date = %s ORDER BY id DESC LIMIT 15", (draw,))
         recent_transactions = c.fetchall()
 
-        # แก้ไขจุดที่ดึงเลขอั้น: ใช้เงื่อนไข ILIKE และกรองเฉพาะ is_raw = TRUE (เหมือนระบบหลัก) เพื่อให้ดึงข้อมูลตรงกัน 100%
-        c.execute("SELECT raw_num FROM BlockedNumbers WHERE (draw_date = %s OR draw_date ILIKE %s) AND is_raw = TRUE", (draw, f"%{draw}%"))
-        b_rows = c.fetchall()
-        blocked_display = ", ".join([str(r[0]) for r in b_rows]) if b_rows else "ไม่มีเลขอั้น"
+        # ดึงเลขอั้นแยก 3 ประเภท (ปิดรับ, 3ตัวจ่ายครึ่ง, 2ตัวจ่ายครึ่ง) เหมือนระบบหลัก
+        b_closed, b_3d, b_2d = get_blocked_display_data(draw)
 
         conn.close()
 
         return Template(PORTAL_TEMPLATE).render(
-            username=user, role=role, market=market, draw_date=draw, drafts=drafts, recent_transactions=recent_transactions, blocked_display=blocked_display
+            username=user, role=role, market=market, draw_date=draw, 
+            drafts=drafts, recent_transactions=recent_transactions, 
+            block_closed=b_closed, block_3d=b_3d, block_2d=b_2d
         )
     except Exception as e:
         return f"Portal Error: {str(e)}"
