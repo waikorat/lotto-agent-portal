@@ -375,8 +375,9 @@ PORTAL_TEMPLATE = """
                 <table class="table table-bordered rate-table text-center">
                     <thead><tr><th>ประเภท</th><th>รางวัล</th><th>ส่วนลด</th></tr></thead>
                     <tbody>
-                        <tr><td>3ตัวตรง</td><td>500</td><td>0%</td></tr>
-                        <tr><td>2ตัวบน/ล่าง</td><td>70</td><td>0%</td></tr>
+                        <tr><td>3ตัวตรง</td><td>{{ rates.pay_3d }}</td><td>{{ rates.disc_3d if rates.disc_3d > 0 else rates.disc_total }}%</td></tr>
+                        <tr><td>3ตัวโต๊ด</td><td>{{ rates.pay_3tod }}</td><td>{{ rates.disc_3d if rates.disc_3d > 0 else rates.disc_total }}%</td></tr>
+                        <tr><td>2ตัวบน/ล่าง</td><td>{{ rates.pay_2d }}</td><td>{{ rates.disc_2d if rates.disc_2d > 0 else rates.disc_total }}%</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -493,7 +494,7 @@ PORTAL_TEMPLATE = """
                         <tbody>
                             {% for tx in recent_transactions %}
                             <tr>
-                                <td><small>{{ tx[2][11:16] if tx[2] and len(tx[2]) >= 16 else '-' }}</small></td>
+                                <td><small>{{ tx[2][11:16] if tx[2] and tx[2]|length >= 16 else '-' }}</small></td>
                                 <td><code>{{ tx[7][-6:] if tx[7] else '-' }}</code></td>
                                 <td><b>{{ tx[8] }}</b></td>
                                 <td>{{ "{:,.0f}".format(tx[10] | float) if 'บน' in tx[9] or 'ตรง' in tx[9] else '-' }}</td>
@@ -518,25 +519,37 @@ def portal_page(user: str, market: str, draw: str):
     try:
         conn = connect_db()
         c = conn.cursor()
-        c.execute("SELECT role FROM Users WHERE username=%s", (user,))
-        res = c.fetchone()
-        role = res[0] if res else "Agent"
+        
+        # ดึงอัตราจ่ายและส่วนลดจริงของ User/Agent คนนี้จากตาราง Users
+        c.execute("SELECT role, disc_total, disc_3d, disc_2d, disc_run, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot FROM Users WHERE username=%s", (user,))
+        user_res = c.fetchone()
+        role = user_res[0] if user_res else "Agent"
+        disc_total = float(user_res[1] or 0) if user_res else 0.0
+        disc_3d = float(user_res[2] or 0) if user_res else 0.0
+        disc_2d = float(user_res[3] or 0) if user_res else 0.0
+        pay_3d = float(user_res[5] or 500) if user_res else 500.0
+        pay_3tod = float(user_res[6] or 100) if user_res else 100.0
+        pay_2d = float(user_res[7] or 70) if user_res else 70.0
 
         c.execute("SELECT id, num, amt_teng, status, type, payout_rate, discount, net FROM TempDraft WHERE username=%s", (user,))
         drafts = c.fetchall()
 
-        c.execute("SELECT * FROM Transactions WHERE draw_date = %s ORDER BY id DESC LIMIT 15", (draw,))
+        c.execute("SELECT * FROM Transactions WHERE draw_date = %s OR draw_date ILIKE %s ORDER BY id DESC LIMIT 15", (draw, f"%{draw}%"))
         recent_transactions = c.fetchall()
 
-        # ดึงเลขอั้นแยก 3 ประเภท (ปิดรับ, 3ตัวจ่ายครึ่ง, 2ตัวจ่ายครึ่ง) เหมือนระบบหลัก
         b_closed, b_3d, b_2d = get_blocked_display_data(draw)
-
         conn.close()
+
+        user_rates = {
+            "pay_3d": pay_3d, "pay_3tod": pay_3tod, "pay_2d": pay_2d,
+            "disc_total": disc_total, "disc_3d": disc_3d, "disc_2d": disc_2d
+        }
 
         return Template(PORTAL_TEMPLATE).render(
             username=user, role=role, market=market, draw_date=draw, 
             drafts=drafts, recent_transactions=recent_transactions, 
-            block_closed=b_closed, block_3d=b_3d, block_2d=b_2d
+            block_closed=b_closed, block_3d=b_3d, block_2d=b_2d,
+            rates=user_rates
         )
     except Exception as e:
         return f"Portal Error: {str(e)}"
@@ -550,6 +563,17 @@ def portal_add_draft(
     try:
         conn = connect_db()
         c = conn.cursor()
+        
+        # ดึงส่วนลดและอัตราจ่ายจริงของ User มาใช้คำนวณส่วนลดและยอดสุทธิ
+        c.execute("SELECT disc_total, disc_3d, disc_2d, disc_run, pay_3d, pay_3tod, pay_2d FROM Users WHERE username=%s", (user,))
+        u_res = c.fetchone()
+        disc_total = float(u_res[0] or 0) if u_res else 0.0
+        disc_3d = float(u_res[1] or 0) if u_res else 0.0
+        disc_2d = float(u_res[2] or 0) if u_res else 0.0
+        pay_3d = float(u_res[4] or 500) if u_res else 500.0
+        pay_3tod = float(u_res[5] or 100) if u_res else 100.0
+        pay_2d = float(u_res[6] or 70) if u_res else 70.0
+
         target_nums = generated_nums if generated_nums and generated_nums.strip() else num_input
         numbers = [n.strip() for n in target_nums.replace(' ', '').split(',') if n.strip()]
 
@@ -557,18 +581,30 @@ def portal_add_draft(
             length = len(n)
             if length == 3:
                 if top_amt > 0:
+                    d_rate = disc_3d if disc_3d > 0 else disc_total
+                    disc_amt = top_amt * (d_rate / 100.0)
+                    net_amt = top_amt - disc_amt
                     c.execute("INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                              (user, 1, 'Customer', n, top_amt, '3ตัวตรง', 500, 0, top_amt, 'ปกติ'))
+                              (user, 1, 'Customer', n, top_amt, '3ตัวตรง', pay_3d, disc_amt, net_amt, 'ปกติ'))
                 if bot_amt > 0:
+                    d_rate = disc_3d if disc_3d > 0 else disc_total
+                    disc_amt = bot_amt * (d_rate / 100.0)
+                    net_amt = bot_amt - disc_amt
                     c.execute("INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                              (user, 1, 'Customer', n, bot_amt, '3ตัวโต๊ด', 100, 0, bot_amt, 'ปกติ'))
+                              (user, 1, 'Customer', n, bot_amt, '3ตัวโต๊ด', pay_3tod, disc_amt, net_amt, 'ปกติ'))
             elif length == 2:
                 if top_amt > 0:
+                    d_rate = disc_2d if disc_2d > 0 else disc_total
+                    disc_amt = top_amt * (d_rate / 100.0)
+                    net_amt = top_amt - disc_amt
                     c.execute("INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                              (user, 1, 'Customer', n, top_amt, '2ตัวบน', 70, 0, top_amt, 'ปกติ'))
+                              (user, 1, 'Customer', n, top_amt, '2ตัวบน', pay_2d, disc_amt, net_amt, 'ปกติ'))
                 if bot_amt > 0:
+                    d_rate = disc_2d if disc_2d > 0 else disc_total
+                    disc_amt = bot_amt * (d_rate / 100.0)
+                    net_amt = bot_amt - disc_amt
                     c.execute("INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)", 
-                              (user, 1, 'Customer', n, bot_amt, '2ตัวล่าง', 70, 0, bot_amt, 'ปกติ'))
+                              (user, 1, 'Customer', n, bot_amt, '2ตัวล่าง', pay_2d, disc_amt, net_amt, 'ปกติ'))
         conn.commit()
         conn.close()
     except Exception as e:
