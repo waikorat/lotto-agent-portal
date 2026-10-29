@@ -359,6 +359,19 @@ PORTAL_TEMPLATE = """
             <a href="/customer-rates-page?user={{ username }}" class="menu-item text-warning">⚙️ กำหนดเรตลูกค้าแยกหวย</a>
             <a href="/agent-settlement?user={{ username }}" class="menu-item text-info">💰 บัญชีรับ-จ่ายเคลียร์ยอด</a>
             <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานสรุปผล & ยอดขาย</a>
+
+            <!-- ================================================= -->
+            <!-- 👑 นำโค้ดชุดนี้มาวางต่อจากเมนูด่วนเดิม ตรงนี้ได้เลยครับ -->
+            <!-- ================================================= -->
+            {% if role == 'Admin' %}
+            <div class="menu-title text-danger mt-3">👑 ผู้ดูแลระบบ (Admin ERP)</div>
+            <a href="/admin-campaigns?user={{ username }}" class="menu-item text-warning">🎟️ จัดการงวดหวย/ตลาด</a>
+            <a href="/admin-blocked?user={{ username }}" class="menu-item text-warning">🚫 จัดการเลขอั้นประจำงวด</a>
+            <a href="/admin-users?user={{ username }}" class="menu-item text-warning">👥 จัดการบัญชีผู้ใช้/ตัวแทน</a>
+            <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานภาพรวมทุกสายงาน</a>
+            <a href="/system-reset?user={{ username }}" class="menu-item text-danger fw-bold">⚠️ รีเซ็ตระบบ (Go-Live)</a>
+            {% endif %}
+            <!-- ================================================= -->
         </div>
 
         <!-- Content ตรงกลาง: คีย์โพย & ฟังก์ชันด่วน -->
@@ -1086,3 +1099,258 @@ def agent_reports_page(user: str):
 @app.get("/logout")
 def logout():
     return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# =====================================================================
+# 👑 ส่วนเสริม: เมนูและหน้าจอจัดการระดับ Admin ในระบบตัวแทน (Admin Command Center)
+# =====================================================================
+
+# 1. หน้าจัดการงวดหวย / ตลาดหวย (Admin Campaign Management)
+ADMIN_CAMPAIGNS_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin - จัดการงวดหวยและตลาด</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container my-4" style="max-width: 900px;">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>🎟️ Admin: จัดการงวดหวยและตลาด (Lottery Campaigns)</h2>
+            <a href="/portal?user={{ username }}&market=รัฐบาลไทย&draw=01/04/2026" class="btn btn-secondary">กลับหน้าหลักตัวแทน</a>
+        </div>
+        {% if msg %}<div class="alert alert-success">{{ msg }}</div>{% endif %}
+        <div class="card shadow p-4 mb-4">
+            <h5 class="fw-bold mb-3">➕ เปิดตลาด / สร้างงวดใหม่</h5>
+            <form method="POST" action="/admin-create-campaign">
+                <input type="hidden" name="username" value="{{ username }}">
+                <div class="row g-3">
+                    <div class="col-md-5">
+                        <label class="form-label small fw-bold">ชื่อตลาด / หวย:</label>
+                        <input type="text" name="lotto_name" class="form-control" placeholder="เช่น หวยรัฐบาลไทย, ฮานอย..." required>
+                    </div>
+                    <div class="col-md-5">
+                        <label class="form-label small fw-bold">งวดประจำวันที่:</label>
+                        <input type="text" name="draw_date" class="form-control" placeholder="เช่น 01/04/2026" required>
+                    </div>
+                    <div class="col-md-2 d-flex align-items-end">
+                        <button type="submit" class="btn btn-primary w-100 fw-bold">สร้างงวด</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="card shadow p-4">
+            <h5 class="fw-bold mb-3">📋 รายการงวดทั้งหมดในระบบ</h5>
+            <table class="table table-striped table-bordered text-center align-middle">
+                <thead class="table-dark">
+                    <tr><th>ID</th><th>ชื่อหวย</th><th>งวดวันที่</th><th>สถานะ</th><th>จัดการ</th></tr>
+                </thead>
+                <tbody>
+                    {% for camp in campaigns %}
+                    <tr>
+                        <td>{{ camp[0] }}</td>
+                        <td><b>{{ camp[1] }}</b></td>
+                        <td>{{ camp[2] }}</td>
+                        <td><span class="badge bg-success">{{ camp[3] }}</span></td>
+                        <td>
+                            <a href="/admin-toggle-campaign?id={{ camp[0] }}&user={{ username }}" class="btn btn-sm btn-outline-danger">สลับสถานะ</a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="5" class="text-muted">ยังไม่มีงวดหวยในระบบ</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+@app.get("/admin-campaigns", response_class=HTMLResponse)
+def admin_campaigns(user: str, msg: str = None):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("SELECT id, lotto_name, draw_date, status FROM LotteryCampaigns ORDER BY id DESC")
+        campaigns = c.fetchall()
+        conn.close()
+    except: campaigns = []
+    return Template(ADMIN_CAMPAIGNS_TEMPLATE).render(username=user, campaigns=campaigns, msg=msg)
+
+@app.post("/admin-create-campaign")
+def admin_create_campaign(username: str = Form(...), lotto_name: str = Form(...), draw_date: str = Form(...)):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("INSERT INTO LotteryCampaigns (lotto_name, draw_date, status) VALUES (%s, %s, 'Active')", (lotto_name, draw_date))
+        conn.commit()
+        conn.close()
+        msg = "สร้างงวดหวยสำเร็จ!"
+    except Exception as e:
+        msg = f"Error: {e}"
+    return RedirectResponse(url=f"/admin-campaigns?user={username}&msg={msg}", status_code=303)
+
+
+# 2. หน้าจัดการเลขอั้นประจำงวด (Admin Blocked Numbers)
+ADMIN_BLOCKED_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin - จัดการเลขอั้น</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container my-4" style="max-width: 900px;">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>🚫 Admin: จัดการเลขอั้นประจำงวด (Blocked Numbers)</h2>
+            <a href="/portal?user={{ username }}&market=รัฐบาลไทย&draw=01/04/2026" class="btn btn-secondary">กลับหน้าหลักตัวแทน</a>
+        </div>
+        {% if msg %}<div class="alert alert-success">{{ msg }}</div>{% endif %}
+        <div class="card shadow p-4 mb-4">
+            <form method="POST" action="/admin-save-blocked">
+                <input type="hidden" name="username" value="{{ username }}">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">งวดวันที่:</label>
+                        <input type="text" name="draw_date" class="form-control" placeholder="01/04/2026" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">ประเภทเลขอั้น:</label>
+                        <select name="status" class="form-select" required>
+                            <option value="ปิดรับ">ปิดรับ (ห้ามแทง)</option>
+                            <option value="จ่ายครึ่ง">จ่ายครึ่ง (เลขอั้นครึ่งราคา)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">ประเภทตัวเลข:</label>
+                        <select name="type" class="form-select" required>
+                            <option value="3ตัว">3 ตัว</option>
+                            <option value="2ตัว">2 ตัว</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <label class="form-label small fw-bold">ระบุตัวเลข (คั่นด้วยจุลภาค เช่น 123, 456 หรือ 78):</label>
+                        <textarea name="raw_num" class="form-control" rows="3" placeholder="กรอกตัวเลข..." required></textarea>
+                    </div>
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-danger w-100 fw-bold">💾 บันทึกเลขอั้น</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+@app.get("/admin-blocked", response_class=HTMLResponse)
+def admin_blocked_page(user: str, msg: str = None):
+    return Template(ADMIN_BLOCKED_TEMPLATE).render(username=user, msg=msg)
+
+@app.post("/admin-save-blocked")
+def admin_save_blocked(username: str = Form(...), draw_date: str = Form(...), status: str = Form(...), type: str = Form(...), raw_num: str = Form(...)):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        nums = [n.strip() for n in raw_num.replace(' ', '').split(',') if n.strip()]
+        for n in nums:
+            c.execute("INSERT INTO BlockedNumbers (draw_date, raw_num, status, type, is_raw) VALUES (%s, %s, %s, %s, TRUE)", (draw_date, n, status, type))
+        conn.commit()
+        conn.close()
+        msg = "บันทึกเลขอั้นสำเร็จ!"
+    except Exception as e:
+        msg = f"Error: {e}"
+    return RedirectResponse(url=f"/admin-blocked?user={username}&msg={msg}", status_code=303)
+
+
+# 3. หน้าจัดการผู้ใช้งานระบบ / ตัวแทน (Admin User Management)
+ADMIN_USERS_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin - จัดการผู้ใช้งานระบบ</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container my-4" style="max-width: 900px;">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2>👥 Admin: จัดการบัญชีผู้ใช้งาน / ตัวแทน (User Management)</h2>
+            <a href="/portal?user={{ username }}&market=รัฐบาลไทย&draw=01/04/2026" class="btn btn-secondary">กลับหน้าหลักตัวแทน</a>
+        </div>
+        {% if msg %}<div class="alert alert-success">{{ msg }}</div>{% endif %}
+        <div class="card shadow p-4 mb-4">
+            <h5 class="fw-bold mb-3">➕ เพิ่มบัญชีผู้ใช้งานใหม่</h5>
+            <form method="POST" action="/admin-create-user">
+                <input type="hidden" name="admin_user" value="{{ username }}">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Username:</label>
+                        <input type="text" name="new_username" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">Password:</label>
+                        <input type="password" name="new_password" class="form-control" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold">ระดับสิทธิ์ (Role):</label>
+                        <select name="role" class="form-select" required>
+                            <option value="Agent">Agent (ตัวแทน)</option>
+                            <option value="Master Agent">Master Agent</option>
+                            <option value="Admin">Admin (ผู้ดูแลระบบ)</option>
+                        </select>
+                    </div>
+                    <div class="col-12">
+                        <button type="submit" class="btn btn-success w-100 fw-bold">สร้างบัญชีผู้ใช้</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="card shadow p-4">
+            <h5 class="fw-bold mb-3">📋 รายชื่อผู้ใช้งานทั้งหมดในระบบ</h5>
+            <table class="table table-striped table-bordered text-center align-middle">
+                <thead class="table-dark">
+                    <tr><th>ID</th><th>Username</th><th>ระดับสิทธิ์</th></tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                    <tr>
+                        <td>{{ u[0] }}</td>
+                        <td><b>{{ u[1] }}</b></td>
+                        <td><span class="badge bg-primary">{{ u[3] }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+@app.get("/admin-users", response_class=HTMLResponse)
+def admin_users_page(user: str, msg: str = None):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("SELECT id, username, password, role FROM Users ORDER BY id DESC")
+        users = c.fetchall()
+        conn.close()
+    except: users = []
+    return Template(ADMIN_USERS_TEMPLATE).render(username=user, users=users, msg=msg)
+
+@app.post("/admin-create-user")
+def admin_create_user(admin_user: str = Form(...), new_username: str = Form(...), new_password: str = Form(...), role: str = Form(...)):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("INSERT INTO Users (username, password, role) VALUES (%s, %s, %s)", (new_username, new_password, role))
+        conn.commit()
+        conn.close()
+        msg = "สร้างบัญชีผู้ใช้สำเร็จ!"
+    except Exception as e:
+        msg = f"Error: {e}"
+    return RedirectResponse(url=f"/admin-users?user={admin_user}&msg={msg}", status_code=303)
