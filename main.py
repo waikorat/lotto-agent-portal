@@ -1400,7 +1400,9 @@ def agent_reports_page(user: str):
         total_net = float(sum_res[1] or 0) if sum_res and sum_res[1] else 0.0
         conn.close()
     except:
-        transactions = [], total_sales = 0.0, total_net = 0.0
+        transactions = []
+        total_sales = 0.0
+        total_net = 0.0
     return Template(AGENT_REPORTS_TEMPLATE).render(username=user, transactions=transactions, total_sales=total_sales, total_net=total_net)
 
 
