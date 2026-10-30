@@ -960,7 +960,7 @@ def admin_save_blocked(username: str = Form(...), draw_date: str = Form(...), st
     return RedirectResponse(url=f"/admin-blocked?user={username}&msg={msg}", status_code=303)
 
 
-# ================= 7. Admin Users (จัดการผู้ใช้) =================
+# ================= 7. Admin Users (ปรับปรุงให้ตรงกับระบบหลัก 100%) =================
 ADMIN_USERS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -981,7 +981,6 @@ ADMIN_USERS_TEMPLATE = """
             <div class="user-box"><div class="fw-bold text-warning mb-1">ผู้ดูแลระบบ</div><div>Username: <b>{{ username }}</b></div></div>
             <div class="menu-title">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
-            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning">➕ เพิ่มลูกค้ารายใหม่</a>
             <a href="/admin-campaigns?user={{ username }}" class="menu-item text-warning">🎟️ จัดการงวดหวย/ตลาด</a>
             <a href="/admin-blocked?user={{ username }}" class="menu-item text-warning">🚫 จัดการเลขอั้นประจำงวด</a>
             <a href="/admin-users?user={{ username }}" class="menu-item text-warning">👥 จัดการบัญชีผู้ใช้/ตัวแทน</a>
@@ -989,51 +988,65 @@ ADMIN_USERS_TEMPLATE = """
             <a href="/system-reset?user={{ username }}" class="menu-item text-danger fw-bold">⚠️ รีเซ็ตระบบ (Go-Live)</a>
         </div>
         <div class="content-center">
-            <h2 class="fw-bold mb-4 text-primary">👥 Admin: จัดการบัญชีผู้ใช้งาน / ตัวแทน (User Management)</h2>
-            {% if msg %}<div class="alert alert-success">{{ msg }}</div>{% endif %}
-            <div class="card shadow p-4 mb-4 bg-white">
-                <h5 class="fw-bold mb-3">➕ เพิ่มบัญชีผู้ใช้งานใหม่</h5>
-                <form method="POST" action="/admin-create-user">
-                    <input type="hidden" name="admin_user" value="{{ username }}">
-                    <div class="row g-3">
-                        <div class="col-md-4">
-                            <label class="form-label small fw-bold">Username:</label>
-                            <input type="text" name="new_username" class="form-control" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-bold">Password:</label>
-                            <input type="password" name="new_password" class="form-control" required>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-bold">ระดับสิทธิ์ (Role):</label>
-                            <select name="role" class="form-select" required>
-                                <option value="Agent">Agent (ตัวแทน)</option>
-                                <option value="Master Agent">Master Agent</option>
-                                <option value="Admin">Admin (ผู้ดูแลระบบ)</option>
-                            </select>
-                        </div>
-                        <div class="col-12">
-                            <button type="submit" class="btn btn-success w-100 fw-bold py-2">💾 สร้างบัญชีผู้ใช้</button>
+            <div class="container-fluid">
+                <div class="row">
+                    <!-- ฟอร์มสร้างบัญชีผู้ใช้ -->
+                    <div class="col-md-5 mb-4">
+                        <div class="card shadow p-4 bg-white">
+                            <h4 class="text-success mb-3 fw-bold">⚙️ สร้างสายงานสมาชิก</h4>
+                            {% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
+                            <form method="POST" action="/admin-create-user">
+                                <input type="hidden" name="admin_user" value="{{ username }}">
+                                <div class="mb-3"><label class="form-label fw-bold small">Username:</label><input type="text" name="new_username" class="form-control form-control-sm" required></div>
+                                <div class="mb-3"><label class="form-label fw-bold small">Password:</label><input type="password" name="new_password" class="form-control form-control-sm" required></div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-bold small">ระดับสิทธิ์ (Role):</label>
+                                    <select name="role" class="form-select form-select-sm">
+                                        <option value="Agent">Agent</option>
+                                        <option value="Member">Member</option>
+                                        <option value="Admin">Admin</option>
+                                    </select>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col"><label class="form-label small">ส่วนลดรวม(%):</label><input type="number" step="0.01" name="disc_total" class="form-control form-control-sm" value="0"></div>
+                                    <div class="col"><label class="form-label small">ส่วนลดวิ่ง(%):</label><input type="number" step="0.01" name="disc_run" class="form-control form-control-sm" value="0"></div>
+                                </div>
+                                <div class="row mb-3">
+                                    <div class="col"><label class="form-label small">จ่าย 3ตรง:</label><input type="number" step="0.01" name="pay_3d" class="form-control form-control-sm" value="500"></div>
+                                    <div class="col"><label class="form-label small">จ่าย 2ตัว:</label><input type="number" step="0.01" name="pay_2d" class="form-control form-control-sm" value="70"></div>
+                                </div>
+                                <button type="submit" class="btn btn-success w-100 fw-bold py-2">💾 บันทึกสมาชิก</button>
+                            </form>
                         </div>
                     </div>
-                </form>
-            </div>
-            <div class="card shadow p-4 bg-white">
-                <h5 class="fw-bold mb-3">📋 รายชื่อผู้ใช้งานทั้งหมดในระบบ</h5>
-                <table class="table table-striped table-bordered text-center align-middle">
-                    <thead class="table-dark">
-                        <tr><th>ID</th><th>Username</th><th>ระดับสิทธิ์</th></tr>
-                    </thead>
-                    <tbody>
-                        {% for u in users %}
-                        <tr>
-                            <td>{{ u[0] }}</td>
-                            <td><b>{{ u[1] }}</b></td>
-                            <td><span class="badge bg-primary">{{ u[3] }}</span></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+
+                    <!-- ตารางแสดงรายชื่อสมาชิก -->
+                    <div class="col-md-7">
+                        <div class="card shadow p-4 bg-white">
+                            <h4 class="text-primary mb-3 fw-bold">🗂️ รายชื่อสมาชิกใต้สายงาน</h4>
+                            <div class="table-responsive">
+                                <table class="table table-striped table-bordered text-center align-middle" style="font-size: 0.85rem;">
+                                    <thead class="table-dark">
+                                        <tr><th>ID</th><th>Username</th><th>สิทธิ์</th><th>จ่าย 3ตรง</th><th>จ่าย 2ตัว</th></tr>
+                                    </thead>
+                                    <tbody>
+                                        {% for u in users %}
+                                        <tr>
+                                            <td>{{ u[0] }}</td>
+                                            <td><b>{{ u[1] }}</b></td>
+                                            <td><span class="badge bg-secondary">{{ u[2] }}</span></td>
+                                            <td>{{ u[8] if u|length > 8 and u[8] else 500 }}</td>
+                                            <td>{{ u[10] if u|length > 10 and u[10] else 70 }}</td>
+                                        </tr>
+                                        {% else %}
+                                        <tr><td colspan="5" class="text-muted">ยังไม่มีสมาชิกในระบบ</td></tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1046,21 +1059,37 @@ def admin_users_page(user: str, msg: str = None):
     try:
         conn = connect_db()
         c = conn.cursor()
-        c.execute("SELECT id, username, password, role FROM Users ORDER BY id DESC")
+        # ดึงข้อมูลผู้ใช้ทั้งหมดมาแสดง
+        c.execute("SELECT * FROM Users ORDER BY id DESC")
         users = c.fetchall()
         conn.close()
-    except: users = []
+    except Exception as e:
+        print("Load Users Error:", e)
+        users = []
     return Template(ADMIN_USERS_TEMPLATE).render(username=user, users=users, msg=msg)
 
 @app.post("/admin-create-user")
-def admin_create_user(admin_user: str = Form(...), new_username: str = Form(...), new_password: str = Form(...), role: str = Form(...)):
+def admin_create_user(
+    admin_user: str = Form(...), 
+    new_username: str = Form(...), 
+    new_password: str = Form(...), 
+    role: str = Form(...),
+    disc_total: float = Form(0),
+    disc_run: float = Form(0),
+    pay_3d: float = Form(500),
+    pay_2d: float = Form(70)
+):
     try:
         conn = connect_db()
         c = conn.cursor()
-        c.execute("INSERT INTO Users (username, password, role) VALUES (%s, %s, %s)", (new_username, new_password, role))
+        # บันทึกข้อมูลลงตาราง Users ให้ครบถ้วนตรงตามโครงสร้างระบบหลัก
+        c.execute("""
+            INSERT INTO Users (username, password, role, disc_total, disc_run, pay_3d, pay_2d) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (new_username, new_password, role, disc_total, disc_run, pay_3d, pay_2d))
         conn.commit()
         conn.close()
-        msg = "สร้างบัญชีผู้ใช้สำเร็จ!"
+        msg = "สร้างสมาชิกสำเร็จ!"
     except Exception as e:
         msg = f"Error: {e}"
     return RedirectResponse(url=f"/admin-users?user={admin_user}&msg={msg}", status_code=303)
