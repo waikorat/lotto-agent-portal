@@ -32,15 +32,27 @@ def startup_agent_db():
                 timestamp TEXT
             );
         """)
-        # ตรวจสอบและเพิ่มคอลัมน์ close_time ใน LotteryCampaigns ถ้ายังไม่มี
-        c.execute("""
-            DO $$ 
-            BEGIN 
-                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='lotterycampaigns' and column_name='close_time') THEN
-                    ALTER TABLE LotteryCampaigns ADD COLUMN close_time VARCHAR(50);
-                END IF;
-            END $$;
-        """)
+        # ตรวจสอบและเพิ่มคอลัมน์ที่จำเป็นในตาราง Users อัตโนมัติ
+        columns_to_add = [
+            ("pay_3d", "NUMERIC(10,2) DEFAULT 500"),
+            ("pay_3tod", "NUMERIC(10,2) DEFAULT 100"),
+            ("pay_2d", "NUMERIC(10,2) DEFAULT 70"),
+            ("pay_run_top", "NUMERIC(10,2) DEFAULT 3.2"),
+            ("pay_run_bot", "NUMERIC(10,2) DEFAULT 4.2"),
+            ("disc_3d", "NUMERIC(5,2) DEFAULT 0"),
+            ("disc_2d", "NUMERIC(5,2) DEFAULT 0"),
+            ("disc_run", "NUMERIC(5,2) DEFAULT 0"),
+            ("disc_total", "NUMERIC(5,2) DEFAULT 0")
+        ]
+        for col_name, col_type in columns_to_add:
+            c.execute(f"""
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' and column_name='{col_name}') THEN
+                        ALTER TABLE Users ADD COLUMN {col_name} {col_type};
+                    END IF;
+                END $$;
+            """)
         conn.commit()
         conn.close()
     except Exception as e:
@@ -960,7 +972,7 @@ def admin_save_blocked(username: str = Form(...), draw_date: str = Form(...), st
     return RedirectResponse(url=f"/admin-blocked?user={username}&msg={msg}", status_code=303)
 
 
-# ================= 7. Admin Users (ปรับปรุงให้ตรงกับระบบหลัก 100%) =================
+# ================= 7. Admin Users (ฉบับสมบูรณ์ครบถ้วนทุกเรตและสิทธิ์) =================
 ADMIN_USERS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -990,56 +1002,82 @@ ADMIN_USERS_TEMPLATE = """
         <div class="content-center">
             <div class="container-fluid">
                 <div class="row">
-                    <!-- ฟอร์มสร้างบัญชีผู้ใช้ -->
+                    <!-- ฟอร์มสร้างสายงานสมาชิก -->
                     <div class="col-md-5 mb-4">
                         <div class="card shadow p-4 bg-white">
-                            <h4 class="text-success mb-3 fw-bold">⚙️ สร้างสายงานสมาชิก</h4>
+                            <h4 class="text-success mb-3 fw-bold">⚙️ สร้างสายงานสมาชิก / ตัวแทน</h4>
                             {% if msg %}<div class="alert alert-success py-2 small">{{ msg }}</div>{% endif %}
                             <form method="POST" action="/admin-create-user">
                                 <input type="hidden" name="admin_user" value="{{ username }}">
-                                <div class="mb-3"><label class="form-label fw-bold small">Username:</label><input type="text" name="new_username" class="form-control form-control-sm" required></div>
-                                <div class="mb-3"><label class="form-label fw-bold small">Password:</label><input type="password" name="new_password" class="form-control form-control-sm" required></div>
+                                
+                                <div class="mb-2"><label class="form-label fw-bold small">Username:</label><input type="text" name="new_username" class="form-control form-control-sm" required></div>
+                                <div class="mb-2"><label class="form-label fw-bold small">Password:</label><input type="password" name="new_password" class="form-control form-control-sm" required></div>
                                 <div class="mb-3">
                                     <label class="form-label fw-bold small">ระดับสิทธิ์ (Role):</label>
-                                    <select name="role" class="form-select form-select-sm">
-                                        <option value="Agent">Agent</option>
-                                        <option value="Member">Member</option>
-                                        <option value="Admin">Admin</option>
+                                    <select name="role" class="form-select form-select-sm" required>
+                                        <option value="Master Agent">Master Agent</option>
+                                        <option value="Agent">Agent (ตัวแทน)</option>
+                                        <option value="Member">Member (สมาชิก)</option>
+                                        <option value="Admin">Admin (ผู้ดูแลระบบ)</option>
                                     </select>
                                 </div>
-                                <div class="row mb-3">
-                                    <div class="col"><label class="form-label small">ส่วนลดรวม(%):</label><input type="number" step="0.01" name="disc_total" class="form-control form-control-sm" value="0"></div>
-                                    <div class="col"><label class="form-label small">ส่วนลดวิ่ง(%):</label><input type="number" step="0.01" name="disc_run" class="form-control form-control-sm" value="0"></div>
+
+                                <hr class="my-2">
+                                <h6 class="fw-bold text-primary small">💰 อัตราจ่ายรางวัล (Pay Rate)</h6>
+                                <div class="row g-2 mb-2">
+                                    <div class="col-4"><label class="form-label extra-small text-muted" style="font-size:0.75rem;">3ตัวตรง:</label><input type="number" step="any" name="pay_3d" class="form-control form-control-sm" value="500"></div>
+                                    <div class="col-4"><label class="form-label extra-small text-muted" style="font-size:0.75rem;">3ตัวโต๊ด:</label><input type="number" step="any" name="pay_3tod" class="form-control form-control-sm" value="100"></div>
+                                    <div class="col-4"><label class="form-label extra-small text-muted" style="font-size:0.75rem;">2ตัว(บน/ล่าง):</label><input type="number" step="any" name="pay_2d" class="form-control form-control-sm" value="70"></div>
+                                    <div class="col-6"><label class="form-label extra-small text-muted" style="font-size:0.75rem;">วิ่งบน:</label><input type="number" step="any" name="pay_run_top" class="form-control form-control-sm" value="3.2"></div>
+                                    <div class="col-6"><label class="form-label extra-small text-muted text-danger" style="font-size:0.75rem;">วิ่งล่าง:</label><input type="number" step="any" name="pay_run_bot" class="form-control form-control-sm" value="4.2"></div>
                                 </div>
-                                <div class="row mb-3">
-                                    <div class="col"><label class="form-label small">จ่าย 3ตรง:</label><input type="number" step="0.01" name="pay_3d" class="form-control form-control-sm" value="500"></div>
-                                    <div class="col"><label class="form-label small">จ่าย 2ตัว:</label><input type="number" step="0.01" name="pay_2d" class="form-control form-control-sm" value="70"></div>
+
+                                <hr class="my-2">
+                                <h6 class="fw-bold text-success small">📉 ส่วนลด (%)</h6>
+                                <div class="row g-2 mb-3">
+                                    <div class="col-6"><label class="form-label extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 3ตัว (%):</label><input type="number" step="any" name="disc_3d" class="form-control form-control-sm" value="0"></div>
+                                    <div class="col-6"><label class="form-label extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 2ตัว (%):</label><input type="number" step="any" name="disc_2d" class="form-control form-control-sm" value="0"></div>
+                                    <div class="col-6"><label class="form-label extra-small text-muted" style="font-size:0.75rem;">ส่วนลดวิ่ง (%):</label><input type="number" step="any" name="disc_run" class="form-control form-control-sm" value="0"></div>
+                                    <div class="col-6"><label class="form-label extra-small text-success fw-bold" style="font-size:0.75rem;">ส่วนลดรวม (%):</label><input type="number" step="any" name="disc_total" class="form-control form-control-sm" value="0"></div>
                                 </div>
-                                <button type="submit" class="btn btn-success w-100 fw-bold py-2">💾 บันทึกสมาชิก</button>
+
+                                <button type="submit" class="btn btn-success w-100 fw-bold py-2">💾 บันทึกสร้างบัญชีผู้ใช้</button>
                             </form>
                         </div>
                     </div>
 
-                    <!-- ตารางแสดงรายชื่อสมาชิก -->
+                    <!-- ตารางแสดงรายชื่อสมาชิกใต้สายงาน (แสดงรายละเอียดครบถ้วน) -->
                     <div class="col-md-7">
                         <div class="card shadow p-4 bg-white">
                             <h4 class="text-primary mb-3 fw-bold">🗂️ รายชื่อสมาชิกใต้สายงาน</h4>
                             <div class="table-responsive">
-                                <table class="table table-striped table-bordered text-center align-middle" style="font-size: 0.85rem;">
+                                <table class="table table-striped table-bordered text-center align-middle" style="font-size: 0.8rem;">
                                     <thead class="table-dark">
-                                        <tr><th>ID</th><th>Username</th><th>สิทธิ์</th><th>จ่าย 3ตรง</th><th>จ่าย 2ตัว</th></tr>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>Username</th>
+                                            <th>สิทธิ์</th>
+                                            <th>3ตรง/โต๊ด</th>
+                                            <th>2ตัว</th>
+                                            <th>วิ่งบน/ล่าง</th>
+                                            <th>ส่วนลด (%)</th>
+                                        </tr>
                                     </thead>
                                     <tbody>
                                         {% for u in users %}
                                         <tr>
                                             <td>{{ u[0] }}</td>
                                             <td><b>{{ u[1] }}</b></td>
-                                            <td><span class="badge bg-secondary">{{ u[2] }}</span></td>
-                                            <td>{{ u[8] if u|length > 8 and u[8] else 500 }}</td>
-                                            <td>{{ u[10] if u|length > 10 and u[10] else 70 }}</td>
+                                            <td><span class="badge bg-secondary">{{ u[3] }}</span></td>
+                                            <td>{{ u[4] or 500 }} / {{ u[5] or 100 }}</td>
+                                            <td>{{ u[6] or 70 }}</td>
+                                            <td>{{ u[7] or 3.2 }} / {{ u[8] or 4.2 }}</td>
+                                            <td>
+                                                <small class="text-danger">รวม: {{ u[12] or 0 }}%</small>
+                                            </td>
                                         </tr>
                                         {% else %}
-                                        <tr><td colspan="5" class="text-muted">ยังไม่มีสมาชิกในระบบ</td></tr>
+                                        <tr><td colspan="7" class="text-muted py-3">ยังไม่มีสมาชิกในระบบ</td></tr>
                                         {% endfor %}
                                     </tbody>
                                 </table>
@@ -1059,8 +1097,7 @@ def admin_users_page(user: str, msg: str = None):
     try:
         conn = connect_db()
         c = conn.cursor()
-        # ดึงข้อมูลผู้ใช้ทั้งหมดมาแสดง
-        c.execute("SELECT * FROM Users ORDER BY id DESC")
+        c.execute("SELECT id, username, password, role, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Users ORDER BY id DESC")
         users = c.fetchall()
         conn.close()
     except Exception as e:
@@ -1074,26 +1111,34 @@ def admin_create_user(
     new_username: str = Form(...), 
     new_password: str = Form(...), 
     role: str = Form(...),
-    disc_total: float = Form(0),
-    disc_run: float = Form(0),
     pay_3d: float = Form(500),
-    pay_2d: float = Form(70)
+    pay_3tod: float = Form(100),
+    pay_2d: float = Form(70),
+    pay_run_top: float = Form(3.2),
+    pay_run_bot: float = Form(4.2),
+    disc_3d: float = Form(0),
+    disc_2d: float = Form(0),
+    disc_run: float = Form(0),
+    disc_total: float = Form(0)
 ):
     try:
         conn = connect_db()
         c = conn.cursor()
-        # บันทึกข้อมูลลงตาราง Users ให้ครบถ้วนตรงตามโครงสร้างระบบหลัก
         c.execute("""
-            INSERT INTO Users (username, password, role, disc_total, disc_run, pay_3d, pay_2d) 
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (new_username, new_password, role, disc_total, disc_run, pay_3d, pay_2d))
+            INSERT INTO Users (
+                username, password, role, 
+                pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, 
+                disc_3d, disc_2d, disc_run, disc_total
+            ) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (new_username, new_password, role, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total))
         conn.commit()
         conn.close()
-        msg = "สร้างสมาชิกสำเร็จ!"
+        msg = f"สร้างบัญชีผู้ใช้ '{new_username}' สำเร็จเรียบร้อยแล้ว!"
     except Exception as e:
         msg = f"Error: {e}"
     return RedirectResponse(url=f"/admin-users?user={admin_user}&msg={msg}", status_code=303)
-
+    
 
 # ================= 8. หน้าจอตั้งค่าเรตลูกค้าแยกตามหวย =================
 CUSTOMER_RATES_TEMPLATE = """
