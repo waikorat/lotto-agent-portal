@@ -1513,7 +1513,7 @@ def execute_system_reset(username: str = Form(...), admin_password: str = Form(.
     except Exception as e:
         return RedirectResponse(url=f"/system-reset?user={username}&error=Error: {str(e)}", status_code=303)
 
-# ================= 12. หน้าจอและฟังก์ชันเพิ่มลูกค้ารายใหม่ (Add Customer) =================
+# ================= 12. หน้าจอและฟังก์ชันเพิ่มลูกค้ารายใหม่ (ฉบับสมบูรณ์) =================
 ADD_CUSTOMER_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -1540,8 +1540,8 @@ ADD_CUSTOMER_TEMPLATE = """
             <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานสรุปผล & ยอดขาย</a>
         </div>
         <div class="content-center">
-            <div class="container my-2" style="max-width: 700px;">
-                <h2 class="fw-bold mb-4 text-primary">👤 เพิ่มลูกค้ารายใหม่เข้าสู่สังกัด</h2>
+            <div class="container my-2" style="max-width: 800px;">
+                <h2 class="fw-bold mb-4 text-primary">👤 เพิ่มลูกค้ารายใหม่เข้าสู่สังกัด (ตั้งค่าเรต & ส่วนลด)</h2>
                 {% if msg %}<div class="alert alert-success">{{ msg }}</div>{% endif %}
                 
                 <div class="card shadow p-4 bg-white">
@@ -1553,23 +1553,54 @@ ADD_CUSTOMER_TEMPLATE = """
                             <input type="text" name="customer_name" class="form-control" placeholder="เช่น คุณสมชาย (สาย A)..." required autofocus>
                         </div>
 
+                        <hr class="my-3">
+                        <h5 class="fw-bold mb-3 text-primary">💰 อัตราจ่าย (Pay Rate ตั้งต้น)</h5>
                         <div class="row g-3 mb-3">
                             <div class="col-md-4">
-                                <label class="form-label small fw-bold">เรตจ่าย 3 ตัวตรง (Default):</label>
+                                <label class="form-label small fw-bold">3 ตัวตรง:</label>
                                 <input type="number" step="any" name="pay_3d" class="form-control" value="500">
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label small fw-bold">เรตจ่าย 3 ตัวโต๊ด (Default):</label>
+                                <label class="form-label small fw-bold">3 ตัวโต๊ด:</label>
                                 <input type="number" step="any" name="pay_3tod" class="form-control" value="100">
                             </div>
                             <div class="col-md-4">
-                                <label class="form-label small fw-bold">เรตจ่าย 2 ตัว (Default):</label>
+                                <label class="form-label small fw-bold">2 ตัว (บน/ล่าง):</label>
                                 <input type="number" step="any" name="pay_2d" class="form-control" value="70">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold">วิ่งบน:</label>
+                                <input type="number" step="any" name="pay_run_top" class="form-control" value="3.2">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold text-danger">วิ่งล่าง:</label>
+                                <input type="number" step="any" name="pay_run_bot" class="form-control" value="4.2">
+                            </div>
+                        </div>
+
+                        <hr class="my-3">
+                        <h5 class="fw-bold mb-3 text-success">📉 ส่วนลด (%) ตั้งต้น</h5>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">ส่วนลด 3 ตัว (%):</label>
+                                <input type="number" step="any" name="disc_3d" class="form-control" value="0">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">ส่วนลด 2 ตัว (%):</label>
+                                <input type="number" step="any" name="disc_2d" class="form-control" value="0">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">ส่วนลดวิ่ง (%):</label>
+                                <input type="number" step="any" name="disc_run" class="form-control" value="0">
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label small fw-bold text-success">ส่วนลดรวมทุกประเภท (%):</label>
+                                <input type="number" step="any" name="disc_total" class="form-control" value="0" placeholder="หากใส่ค่านี้ จะใช้เป็นส่วนลดรวมทุกประเภททันที">
                             </div>
                         </div>
 
                         <div class="d-grid gap-2 mt-4">
-                            <button type="submit" class="btn btn-primary btn-lg fw-bold py-2">💾 บันทึกเพิ่มลูกค้าใหม่</button>
+                            <button type="submit" class="btn btn-primary btn-lg fw-bold py-2">💾 บันทึกเพิ่มลูกค้าใหม่พร้อมเรต</button>
                             <a href="/select-market?user={{ username }}" class="btn btn-secondary fw-bold">กลับหน้าหลัก</a>
                         </div>
                     </form>
@@ -1591,19 +1622,28 @@ def save_new_customer(
     customer_name: str = Form(...),
     pay_3d: float = Form(500),
     pay_3tod: float = Form(100),
-    pay_2d: float = Form(70)
+    pay_2d: float = Form(70),
+    pay_run_top: float = Form(3.2),
+    pay_run_bot: float = Form(4.2),
+    disc_3d: float = Form(0),
+    disc_2d: float = Form(0),
+    disc_run: float = Form(0),
+    disc_total: float = Form(0)
 ):
     try:
         conn = connect_db()
         c = conn.cursor()
-        # บันทึกลงตาราง Customers โดยผูกเจ้าของสายงาน (owner_username) เป็นผู้ใช้งานปัจจุบัน
+        # บันทึกข้อมูลลูกค้าพร้อมเรตจ่ายวิ่งบน/ล่าง และส่วนลดแยก/รวมลงตาราง Customers
         c.execute("""
-            INSERT INTO Customers (name, owner_username, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_total) 
-            VALUES (%s, %s, %s, %s, %s, 3.2, 4.2, 0)
-        """, (customer_name, username, pay_3d, pay_3tod, pay_2d))
+            INSERT INTO Customers (
+                name, owner_username, pay_3d, pay_3tod, pay_2d, 
+                pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total
+            ) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (customer_name, username, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total))
         conn.commit()
         conn.close()
-        msg = f"เพิ่มลูกค้า '{customer_name}' สำเร็จเรียบร้อยแล้ว!"
+        msg = f"เพิ่มลูกค้า '{customer_name}' พร้อมตั้งค่าเรตและส่วนลดสำเร็จ!"
     except Exception as e:
         msg = f"Error: {e}"
     return RedirectResponse(url=f"/add-customer-page?user={username}&msg={msg}", status_code=303)
