@@ -153,6 +153,7 @@ SELECT_MARKET_TEMPLATE = """
 
             <div class="menu-title">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
+            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning">➕ เพิ่มลูกค้ารายใหม่</a>
             <a href="/customer-rates-page?user={{ username }}" class="menu-item text-warning">⚙️ กำหนดเรตลูกค้าแยกหวย</a>
             <a href="/agent-settlement?user={{ username }}" class="menu-item text-info">💰 บัญชีรับ-จ่ายเคลียร์ยอด</a>
             <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานสรุปผล & ยอดขาย</a>
@@ -377,6 +378,7 @@ PORTAL_TEMPLATE = """
 
             <div class="menu-title">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
+            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning">➕ เพิ่มลูกค้ารายใหม่</a>
             <a href="/customer-rates-page?user={{ username }}" class="menu-item text-warning">⚙️ กำหนดเรตลูกค้าแยกหวย</a>
             <a href="/agent-settlement?user={{ username }}" class="menu-item text-info">💰 บัญชีรับ-จ่ายเคลียร์ยอด</a>
             <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานสรุปผล & ยอดขาย</a>
@@ -764,6 +766,7 @@ ADMIN_CAMPAIGNS_TEMPLATE = """
             </div>
             <div class="menu-title">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
+            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning">➕ เพิ่มลูกค้ารายใหม่</a>
             <a href="/admin-campaigns?user={{ username }}" class="menu-item text-warning">🎟️ จัดการงวดหวย/ตลาด</a>
             <a href="/admin-blocked?user={{ username }}" class="menu-item text-warning">🚫 จัดการเลขอั้นประจำงวด</a>
             <a href="/admin-users?user={{ username }}" class="menu-item text-warning">👥 จัดการบัญชีผู้ใช้/ตัวแทน</a>
@@ -889,6 +892,7 @@ ADMIN_BLOCKED_TEMPLATE = """
             <div class="user-box"><div class="fw-bold text-warning mb-1">ผู้ดูแลระบบ</div><div>Username: <b>{{ username }}</b></div></div>
             <div class="menu-title">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
+            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning">➕ เพิ่มลูกค้ารายใหม่</a>
             <a href="/admin-campaigns?user={{ username }}" class="menu-item text-warning">🎟️ จัดการงวดหวย/ตลาด</a>
             <a href="/admin-blocked?user={{ username }}" class="menu-item text-warning">🚫 จัดการเลขอั้นประจำงวด</a>
             <a href="/admin-users?user={{ username }}" class="menu-item text-warning">👥 จัดการบัญชีผู้ใช้/ตัวแทน</a>
@@ -977,6 +981,7 @@ ADMIN_USERS_TEMPLATE = """
             <div class="user-box"><div class="fw-bold text-warning mb-1">ผู้ดูแลระบบ</div><div>Username: <b>{{ username }}</b></div></div>
             <div class="menu-title">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
+            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning">➕ เพิ่มลูกค้ารายใหม่</a>
             <a href="/admin-campaigns?user={{ username }}" class="menu-item text-warning">🎟️ จัดการงวดหวย/ตลาด</a>
             <a href="/admin-blocked?user={{ username }}" class="menu-item text-warning">🚫 จัดการเลขอั้นประจำงวด</a>
             <a href="/admin-users?user={{ username }}" class="menu-item text-warning">👥 จัดการบัญชีผู้ใช้/ตัวแทน</a>
@@ -1082,6 +1087,7 @@ CUSTOMER_RATES_TEMPLATE = """
             <div class="user-box"><div class="fw-bold text-warning mb-1">ข้อมูลผู้ใช้</div><div>Username: <b>{{ username }}</b></div></div>
             <div class="menu-title">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
+            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning">➕ เพิ่มลูกค้ารายใหม่</a>
             <a href="/customer-rates-page?user={{ username }}" class="menu-item text-warning">⚙️ กำหนดเรตลูกค้าแยกหวย</a>
             <a href="/agent-settlement?user={{ username }}" class="menu-item text-info">💰 บัญชีรับ-จ่ายเคลียร์ยอด</a>
             <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานสรุปผล & ยอดขาย</a>
@@ -1203,6 +1209,7 @@ AGENT_SETTLEMENT_TEMPLATE = """
             <div class="user-box"><div class="fw-bold text-warning mb-1">ข้อมูลผู้ใช้</div><div>Username: <b>{{ username }}</b></div></div>
             <div class="menu-title">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
+            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning">➕ เพิ่มลูกค้ารายใหม่</a>
             <a href="/customer-rates-page?user={{ username }}" class="menu-item text-warning">⚙️ กำหนดเรตลูกค้าแยกหวย</a>
             <a href="/agent-settlement?user={{ username }}" class="menu-item text-info">💰 บัญชีรับ-จ่ายเคลียร์ยอด</a>
             <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานสรุปผล & ยอดขาย</a>
@@ -1323,6 +1330,7 @@ AGENT_REPORTS_TEMPLATE = """
             <div class="user-box"><div class="fw-bold text-warning mb-1">ข้อมูลผู้ใช้</div><div>Username: <b>{{ username }}</b></div></div>
             <div class="menu-title">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
+            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning">➕ เพิ่มลูกค้ารายใหม่</a>
             <a href="/customer-rates-page?user={{ username }}" class="menu-item text-warning">⚙️ กำหนดเรตลูกค้าแยกหวย</a>
             <a href="/agent-settlement?user={{ username }}" class="menu-item text-info">💰 บัญชีรับ-จ่ายเคลียร์ยอด</a>
             <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานสรุปผล & ยอดขาย</a>
@@ -1428,6 +1436,7 @@ SYSTEM_RESET_TEMPLATE = """
             <div class="user-box"><div class="fw-bold text-warning mb-1">ผู้ดูแลระบบ</div><div>Username: <b>{{ username }}</b></div></div>
             <div class="menu-title">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
+            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning">➕ เพิ่มลูกค้ารายใหม่</a>
             <a href="/admin-campaigns?user={{ username }}" class="menu-item text-warning">🎟️ จัดการงวดหวย/ตลาด</a>
             <a href="/admin-blocked?user={{ username }}" class="menu-item text-warning">🚫 จัดการเลขอั้นประจำงวด</a>
             <a href="/admin-users?user={{ username }}" class="menu-item text-warning">👥 จัดการบัญชีผู้ใช้/ตัวแทน</a>
@@ -1503,6 +1512,101 @@ def execute_system_reset(username: str = Form(...), admin_password: str = Form(.
         return RedirectResponse(url="/login?error=รีเซ็ตระบบสำเร็จ! ข้อมูลถูกล้างเกลี้ยงพร้อมเริ่มใช้งานจริงแล้ว", status_code=303)
     except Exception as e:
         return RedirectResponse(url=f"/system-reset?user={username}&error=Error: {str(e)}", status_code=303)
+
+# ================= 12. หน้าจอและฟังก์ชันเพิ่มลูกค้ารายใหม่ (Add Customer) =================
+ADD_CUSTOMER_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>LuckyNumber - เพิ่มลูกค้ารายใหม่</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    """ + COMMON_SIDEBAR_STYLE + """
+</head>
+<body>
+    <div class="top-header">
+        <span class="logo-text">LuckyNumber Portal</span>
+        <div>ผู้ใช้งาน: <b>{{ username }}</b></div>
+        <div><a href="/login" class="btn btn-danger btn-sm fw-bold px-3">log out</a></div>
+    </div>
+    <div class="main-container">
+        <div class="sidebar-left">
+            <div class="user-box"><div class="fw-bold text-warning mb-1">ข้อมูลผู้ใช้</div><div>Username: <b>{{ username }}</b></div></div>
+            <div class="menu-title">เมนูด่วน</div>
+            <a href="/select-market?user={{ username }}" class="menu-item">▶ เลือกตลาด/งวด</a>
+            <a href="/add-customer-page?user={{ username }}" class="menu-item text-warning fw-bold">➕ เพิ่มลูกค้ารายใหม่</a>
+            <a href="/customer-rates-page?user={{ username }}" class="menu-item text-warning">⚙️ กำหนดเรตลูกค้าแยกหวย</a>
+            <a href="/agent-settlement?user={{ username }}" class="menu-item text-info">💰 บัญชีรับ-จ่ายเคลียร์ยอด</a>
+            <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานสรุปผล & ยอดขาย</a>
+        </div>
+        <div class="content-center">
+            <div class="container my-2" style="max-width: 700px;">
+                <h2 class="fw-bold mb-4 text-primary">👤 เพิ่มลูกค้ารายใหม่เข้าสู่สังกัด</h2>
+                {% if msg %}<div class="alert alert-success">{{ msg }}</div>{% endif %}
+                
+                <div class="card shadow p-4 bg-white">
+                    <form method="POST" action="/save-new-customer">
+                        <input type="hidden" name="username" value="{{ username }}">
+                        
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">ชื่อ - นามสกุล หรือ ฉายาลูกค้า:</label>
+                            <input type="text" name="customer_name" class="form-control" placeholder="เช่น คุณสมชาย (สาย A)..." required autofocus>
+                        </div>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">เรตจ่าย 3 ตัวตรง (Default):</label>
+                                <input type="number" step="any" name="pay_3d" class="form-control" value="500">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">เรตจ่าย 3 ตัวโต๊ด (Default):</label>
+                                <input type="number" step="any" name="pay_3tod" class="form-control" value="100">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">เรตจ่าย 2 ตัว (Default):</label>
+                                <input type="number" step="any" name="pay_2d" class="form-control" value="70">
+                            </div>
+                        </div>
+
+                        <div class="d-grid gap-2 mt-4">
+                            <button type="submit" class="btn btn-primary btn-lg fw-bold py-2">💾 บันทึกเพิ่มลูกค้าใหม่</button>
+                            <a href="/select-market?user={{ username }}" class="btn btn-secondary fw-bold">กลับหน้าหลัก</a>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+@app.get("/add-customer-page", response_class=HTMLResponse)
+def add_customer_page(user: str, msg: str = None):
+    return Template(ADD_CUSTOMER_TEMPLATE).render(username=user, msg=msg)
+
+@app.post("/save-new-customer")
+def save_new_customer(
+    username: str = Form(...),
+    customer_name: str = Form(...),
+    pay_3d: float = Form(500),
+    pay_3tod: float = Form(100),
+    pay_2d: float = Form(70)
+):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        # บันทึกลงตาราง Customers โดยผูกเจ้าของสายงาน (owner_username) เป็นผู้ใช้งานปัจจุบัน
+        c.execute("""
+            INSERT INTO Customers (name, owner_username, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_total) 
+            VALUES (%s, %s, %s, %s, %s, 3.2, 4.2, 0)
+        """, (customer_name, username, pay_3d, pay_3tod, pay_2d))
+        conn.commit()
+        conn.close()
+        msg = f"เพิ่มลูกค้า '{customer_name}' สำเร็จเรียบร้อยแล้ว!"
+    except Exception as e:
+        msg = f"Error: {e}"
+    return RedirectResponse(url=f"/add-customer-page?user={username}&msg={msg}", status_code=303)
 
 @app.get("/logout")
 def logout():
