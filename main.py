@@ -417,18 +417,40 @@ def portal_page(user: str, market: str, draw: str, customer_id: int = None):
                 current_customer_name = cust[1]
                 break
 
+        # ดึงเรตตามรายชื่อที่เลือก ณ ขณะนั้น (ให้ดึงครบทุกคอลัมน์ทั้งอัตราจ่ายและส่วนลด)
         user_rates = {"pay_3d": 500, "pay_3tod": 100, "pay_2d": 70, "pay_run_top": 3.2, "pay_run_bot": 4.2, "disc_total": 0, "disc_3d": 0, "disc_2d": 0, "disc_run": 0}
+        
         if str(customer_id).startswith("user_"):
             u_id = str(customer_id).replace("user_", "")
-            c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_total FROM Users WHERE id=%s", (u_id,))
+            c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Users WHERE id=%s", (u_id,))
             ur = c.fetchone()
             if ur:
-                user_rates.update({"pay_3d": float(ur[0] or 500), "pay_3tod": float(ur[1] or 100), "pay_2d": float(ur[2] or 70), "pay_run_top": float(ur[3] or 3.2), "pay_run_bot": float(ur[4] or 4.2), "disc_total": float(ur[5] or 0)})
+                user_rates.update({
+                    "pay_3d": float(ur[0] or 500), 
+                    "pay_3tod": float(ur[1] or 100), 
+                    "pay_2d": float(ur[2] or 70), 
+                    "pay_run_top": float(ur[3] or 3.2), 
+                    "pay_run_bot": float(ur[4] or 4.2),
+                    "disc_3d": float(ur[5] or 0),
+                    "disc_2d": float(ur[6] or 0),
+                    "disc_run": float(ur[7] or 0),
+                    "disc_total": float(ur[8] or 0)
+                })
         else:
-            c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_total FROM Customers WHERE id=%s", (customer_id,))
+            c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Customers WHERE id=%s", (customer_id,))
             cr = c.fetchone()
             if cr:
-                user_rates.update({"pay_3d": float(cr[0] or 500), "pay_3tod": float(cr[1] or 100), "pay_2d": float(cr[2] or 70), "pay_run_top": float(cr[3] or 3.2), "pay_run_bot": float(cr[4] or 4.2), "disc_total": float(cr[5] or 0)})
+                user_rates.update({
+                    "pay_3d": float(cr[0] or 500), 
+                    "pay_3tod": float(cr[1] or 100), 
+                    "pay_2d": float(cr[2] or 70), 
+                    "pay_run_top": float(cr[3] or 3.2), 
+                    "pay_run_bot": float(cr[4] or 4.2),
+                    "disc_3d": float(cr[5] or 0),
+                    "disc_2d": float(cr[6] or 0),
+                    "disc_run": float(cr[7] or 0),
+                    "disc_total": float(cr[8] or 0)
+                })
 
         c.execute("SELECT close_time FROM LotteryCampaigns WHERE lotto_name=%s AND draw_date=%s", (market, draw))
         cr_res = c.fetchone()
