@@ -120,16 +120,39 @@ def login_action(username: str = Form(...), password: str = Form(...)):
 # ================= Layout หลัก (รวมเมนูด้านบนครอบคลุมทุกฟังก์ชัน) =================
 UNIFIED_LAYOUT = """
 <style>
-    body { background-color: #f7e6d0; font-family: 'Segoe UI', sans-serif; margin: 0; }
-    .top-navbar { background-color: #000; border-bottom: 2px solid #d4af37; padding: 5px 15px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; }
-    .logo-text { font-family: 'Georgia', serif; font-style: italic; font-weight: bold; font-size: 1.4rem; color: #f3e5ab; margin-right: 10px; }
+    /* ตั้งค่าพื้นฐานและการตัดคำไม่ให้ล้นจอ */
+    * { box-sizing: border-box; }
+    body { background-color: #f7e6d0; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 0; overflow-x: hidden; }
+    
+    /* Top Navbar ด้านบนแบบยืดหยุ่นตามหน้าจอ */
+    .top-navbar { background-color: #000; border-bottom: 2px solid #d4af37; padding: 8px 15px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; width: 100%; }
+    .logo-text { font-family: 'Georgia', serif; font-style: italic; font-weight: bold; font-size: 1.3rem; color: #f3e5ab; margin-right: 10px; white-space: nowrap; }
     .top-nav-menu { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-    .top-nav-menu a { color: #fff; text-decoration: none; font-size: 0.8rem; padding: 4px 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid #333; }
+    .top-nav-menu a { color: #fff; text-decoration: none; font-size: 0.8rem; padding: 4px 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid #333; white-space: nowrap; }
     .top-nav-menu a:hover, .top-nav-menu a.active { background: #d4af37; color: #000; font-weight: bold; }
-    .sticky-timer { position: sticky; top: 10px; z-index: 1000; float: right; background: #dc3545; color: white; padding: 8px 15px; border-radius: 8px; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.3); border: 2px solid #fff; }
+    
+    /* โครงสร้างหลักแบบ Grid / Flex ที่ปรับขนาดพอดีจออัตโนมัติ */
+    .main-container { display: flex; width: 100vw; height: calc(100vh - 48px); overflow: hidden; }
+    .sidebar-left { width: 240px; background-color: #000; color: white; border-right: 2px solid #d4af37; padding: 12px; flex-shrink: 0; overflow-y: auto; }
+    .content-center { flex-grow: 1; padding: 15px; overflow-y: auto; background-color: #f7e6d0; height: 100%; }
+    .sidebar-right { width: 280px; background-color: rgba(255,255,255,0.7); border-left: 2px solid #d4af37; padding: 12px; flex-shrink: 0; overflow-y: auto; }
+    
+    /* ควบคุมขนาดตารางและฟอร์มไม่ให้ล้นหน้าจอ */
+    .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .card { width: 100%; max-width: 100%; word-break: break-word; }
+    
+    /* นาฬิกานับถอยหลังลอยตัวมุมขวาบน */
+    .sticky-timer { position: sticky; top: 10px; z-index: 1000; float: right; background: #dc3545; color: white; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 2px solid #fff; }
+
+    /* ปรับขนาดอัตโนมัติเมื่อเปิดบนจอขนาดเล็กหรือแท็บเล็ต */
+    @media (max-width: 992px) {
+        .main-container { flex-direction: column; height: auto; overflow: auto; }
+        .sidebar-left, .sidebar-right { width: 100%; max-height: 200px; }
+        .content-center { height: auto; }
+    }
 </style>
 <div class="top-navbar">
-    <div class="d-flex align-items-center">
+    <div class="d-flex align-items-center flex-wrap">
         <span class="logo-text">LuckyNumber ERP</span>
         <div class="top-nav-menu">
             <a href="/dashboard?user={{ username }}">แดชบอร์ด</a>
@@ -144,9 +167,9 @@ UNIFIED_LAYOUT = """
             <a href="/system-reset?user={{ username }}" class="text-danger">รีเซ็ตระบบ</a>
         </div>
     </div>
-    <div>
-        <span class="text-warning small me-2">ผู้ใช้งาน: <b>{{ username }} ({{ role }})</b></span>
-        <a href="/login" class="btn btn-danger btn-sm fw-bold px-3">ออกจากระบบ</a>
+    <div class="d-flex align-items-center gap-2">
+        <span class="text-warning small">ผู้ใช้งาน: <b>{{ username }} ({{ role }})</b></span>
+        <a href="/login" class="btn btn-danger btn-sm fw-bold px-2 py-1" style="font-size: 0.75rem;">ออกจากระบบ</a>
     </div>
 </div>
 """
