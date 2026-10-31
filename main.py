@@ -234,12 +234,18 @@ def get_blocked_display_data(draw_date):
             if not r_num: continue
             num_str = str(r_num).strip()
             if status_val == "ปิดรับ":
-                if num_str not in seen_c: seen_c.add(num_str); l_c.append(num_str)
+                if num_str not in seen_c:
+                    seen_c.add(num_str)
+                    l_c.append(num_str)
             else:
                 if len(num_str) == 3 or type_val == "3ตัว":
-                    if num_str not in seen_3: seen_3.add(num_str); l_3.append(num_str)
+                    if num_str not in seen_3:
+                        seen_3.add(num_str)
+                        l_3.append(num_str)
                 elif len(num_str) == 2 or type_val == "2ตัว":
-                    if num_str not in seen_2: seen_2.add(num_str); l_2.append(num_str)
+                    if num_str not in seen_2:
+                        seen_2.add(num_str)
+                        l_2.append(num_str)
         return ", ".join(l_c), ", ".join(l_3), ", ".join(l_2)
     except:
         return "", "", ""
@@ -375,13 +381,19 @@ PORTAL_TEMPLATE = """
             </div>
         </div>
 
-        <!-- Sidebar ขวา: เลขอั้น -->
+
+        <!-- Sidebar ขวา: เลขอั้น 3 กรอบแยกส่วน -->
         <div class="sidebar-right">
-            <h6 class="text-center fw-bold text-danger mb-3">🚫 เลขอั้นประจำงวด</h6>
-            <label class="small fw-bold">เลขอั้นปิดรับ:</label>
-            <textarea class="form-control form-control-sm mb-2 text-danger fw-bold bg-light" rows="2" readonly>{{ block_closed }}</textarea>
-            <label class="small fw-bold">เลขอั้นจ่ายครึ่ง:</label>
-            <textarea class="form-control form-control-sm bg-light" rows="3" readonly>{{ block_half }}</textarea>
+            <h6 class="text-center fw-bold text-danger mb-3">🚫 รายการเลขอั้นประจำงวด</h6>
+            
+            <label class="fw-bold text-dark mb-1 small">1. เลขอั้นปิดรับ:</label>
+            <textarea class="form-control form-control-sm mb-2 bg-light text-danger fw-bold" rows="2" readonly>{{ block_closed }}</textarea>
+            
+            <label class="fw-bold text-dark mb-1 small">2. เลขอั้น 3 ตัวตรง-โต๊ด ทุกกลับ (จ่ายครึ่ง):</label>
+            <textarea class="form-control form-control-sm mb-2 bg-light text-dark" rows="2" readonly>{{ block_3d }}</textarea>
+            
+            <label class="fw-bold text-dark mb-1 small">3. เลขอั้น 2 ตัว บน-ล่าง พร้อมตัวกลับ (จ่ายครึ่ง):</label>
+            <textarea class="form-control form-control-sm bg-light text-dark" rows="2" readonly>{{ block_2d }}</textarea>
         </div>
     </div>
 </body>
@@ -419,39 +431,25 @@ def portal_page(user: str, market: str, draw: str, customer_id: int = None):
 
         # ดึงเรตตามรายชื่อที่เลือก ณ ขณะนั้น (ให้ดึงครบทุกคอลัมน์ทั้งอัตราจ่ายและส่วนลด)
         user_rates = {"pay_3d": 500, "pay_3tod": 100, "pay_2d": 70, "pay_run_top": 3.2, "pay_run_bot": 4.2, "disc_total": 0, "disc_3d": 0, "disc_2d": 0, "disc_run": 0}
-        
         if str(customer_id).startswith("user_"):
             u_id = str(customer_id).replace("user_", "")
             c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Users WHERE id=%s", (u_id,))
             ur = c.fetchone()
             if ur:
                 user_rates.update({
-                    "pay_3d": float(ur[0] or 500), 
-                    "pay_3tod": float(ur[1] or 100), 
-                    "pay_2d": float(ur[2] or 70), 
-                    "pay_run_top": float(ur[3] or 3.2), 
-                    "pay_run_bot": float(ur[4] or 4.2),
-                    "disc_3d": float(ur[5] or 0),
-                    "disc_2d": float(ur[6] or 0),
-                    "disc_run": float(ur[7] or 0),
-                    "disc_total": float(ur[8] or 0)
+                    "pay_3d": float(ur[0] or 500), "pay_3tod": float(ur[1] or 100), "pay_2d": float(ur[2] or 70), 
+                    "pay_run_top": float(ur[3] or 3.2), "pay_run_bot": float(ur[4] or 4.2),
+                    "disc_3d": float(ur[5] or 0), "disc_2d": float(ur[6] or 0), "disc_run": float(ur[7] or 0), "disc_total": float(ur[8] or 0)
                 })
         else:
             c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Customers WHERE id=%s", (customer_id,))
             cr = c.fetchone()
             if cr:
                 user_rates.update({
-                    "pay_3d": float(cr[0] or 500), 
-                    "pay_3tod": float(cr[1] or 100), 
-                    "pay_2d": float(cr[2] or 70), 
-                    "pay_run_top": float(cr[3] or 3.2), 
-                    "pay_run_bot": float(cr[4] or 4.2),
-                    "disc_3d": float(cr[5] or 0),
-                    "disc_2d": float(cr[6] or 0),
-                    "disc_run": float(cr[7] or 0),
-                    "disc_total": float(cr[8] or 0)
+                    "pay_3d": float(cr[0] or 500), "pay_3tod": float(cr[1] or 100), "pay_2d": float(cr[2] or 70), 
+                    "pay_run_top": float(cr[3] or 3.2), "pay_run_bot": float(cr[4] or 4.2),
+                    "disc_3d": float(cr[5] or 0), "disc_2d": float(cr[6] or 0), "disc_run": float(cr[7] or 0), "disc_total": float(cr[8] or 0)
                 })
-
         c.execute("SELECT close_time FROM LotteryCampaigns WHERE lotto_name=%s AND draw_date=%s", (market, draw))
         cr_res = c.fetchone()
         close_time = cr_res[0] if cr_res and cr_res[0] else ""
@@ -460,12 +458,11 @@ def portal_page(user: str, market: str, draw: str, customer_id: int = None):
         drafts = c.fetchall()
 
         b_closed, b_3d, b_2d = get_blocked_display_data(draw)
-        conn.close()
-
+        
         return Template(PORTAL_TEMPLATE).render(
             username=user, role=role, market=market, draw_date=draw,
             customers=customers, customer_id=customer_id, current_customer_name=current_customer_name,
-            drafts=drafts, block_closed=b_closed, block_half=f"3ตัว: {b_3d} | 2ตัว: {b_2d}",
+            drafts=drafts, block_closed=b_closed, block_3d=b_3d, block_2d=b_2d,
             rates=user_rates, close_time=close_time
         )
     except Exception as e:
