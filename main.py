@@ -225,29 +225,35 @@ def get_blocked_display_data(draw_date):
     try:
         conn = connect_db()
         c = conn.cursor()
+        # ดึงข้อมูลดิบเลขอั้นทั้งหมดของงวดนี้
         c.execute("SELECT raw_num, status, type FROM BlockedNumbers WHERE (draw_date = %s OR draw_date ILIKE %s)", (draw_date, f"%{draw_date}%"))
         rows = c.fetchall()
         conn.close()
-        l_c, l_3, l_2 = [], [], []
-        seen_c, seen_3, seen_2 = set(), set(), set()
+        
+        closed_list = []
+        half_3d_list = []
+        half_2d_list = []
+        
         for r_num, status_val, type_val in rows:
             if not r_num: continue
             num_str = str(r_num).strip()
+            
+            # กรอบที่ 1: เลขอั้นปิดรับ (status เป็น "ปิดรับ")
             if status_val == "ปิดรับ":
-                if num_str not in seen_c:
-                    seen_c.add(num_str)
-                    l_c.append(num_str)
-            else:
-                if len(num_str) == 3 or type_val == "3ตัว":
-                    if num_str not in seen_3:
-                        seen_3.add(num_str)
-                        l_3.append(num_str)
-                elif len(num_str) == 2 or type_val == "2ตัว":
-                    if num_str not in seen_2:
-                        seen_2.add(num_str)
-                        l_2.append(num_str)
-        return ", ".join(l_c), ", ".join(l_3), ", ".join(l_2)
-    except:
+                if num_str not in closed_list:
+                    closed_list.append(num_str)
+            # กรอบที่ 2: เลขอั้น 3 ตัว (status เป็น "จ่ายครึ่ง" และ type เป็น "3ตัว" หรือความยาว 3)
+            elif status_val == "จ่ายครึ่ง" and (type_val == "3ตัว" or len(num_str) == 3):
+                if num_str not in half_3d_list:
+                    half_3d_list.append(num_str)
+            # กรอบที่ 3: เลขอั้น 2 ตัว (status เป็น "จ่ายครึ่ง" และ type เป็น "2ตัว" หรือความยาว 2)
+            elif status_val == "จ่ายครึ่ง" and (type_val == "2ตัว" or len(num_str) == 2):
+                if num_str not in half_2d_list:
+                    half_2d_list.append(num_str)
+                    
+        return ", ".join(closed_list), ", ".join(half_3d_list), ", ".join(half_2d_list)
+    except Exception as e:
+        print("Blocked Data Error:", e)
         return "", "", ""
 
 
