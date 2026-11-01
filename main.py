@@ -22,6 +22,7 @@ def get_thai_time():
     return datetime.utcnow() + timedelta(hours=7)
 
 # --- Startup Migration ตารางและคอลัมน์พื้นฐานทั้งหมด ---
+# --- Startup Migration ตารางและคอลัมน์พื้นฐานทั้งหมด ---
 @app.on_event("startup")
 def startup_agent_db():
     try:
@@ -38,7 +39,6 @@ def startup_agent_db():
                 timestamp TEXT
             );
         """)
-        # ตรวจสอบและเพิ่มคอลัมน์ close_time ใน LotteryCampaigns
         c.execute("""
             DO $$ 
             BEGIN 
@@ -47,8 +47,9 @@ def startup_agent_db():
                 END IF;
             END $$;
         """)
-        # ตรวจสอบคอลัมน์ใน Users
+        # เพิ่ม parent_username เพื่อจำแนกสายงาน
         columns_to_add = [
+            ("parent_username", "VARCHAR(100) DEFAULT 'admin'"),
             ("pay_3d", "NUMERIC(10,2) DEFAULT 500"),
             ("pay_3tod", "NUMERIC(10,2) DEFAULT 100"),
             ("pay_2d", "NUMERIC(10,2) DEFAULT 70"),
@@ -68,6 +69,15 @@ def startup_agent_db():
                     END IF;
                 END $$;
             """)
+        # เพิ่มคอลัมน์เจ้าของสายงานในตาราง Customers
+        c.execute("""
+            DO $$ 
+            BEGIN 
+                IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='customers' and column_name='owner_username') THEN
+                    ALTER TABLE Customers ADD COLUMN owner_username VARCHAR(100) DEFAULT 'admin';
+                END IF;
+            END $$;
+        """)
         conn.commit()
         conn.close()
     except Exception as e:
@@ -490,24 +500,35 @@ PORTAL_TEMPLATE = """
 """
 
 @app.get("/portal", response_class=HTMLResponse)
-def portal_page(user: str, market: str, draw: str, customer_id: int = None):
+def portal_page(user: str, market: str, draw: str, customer_id: str = None):
     try:
         conn = connect_db()
         c = conn.cursor()
-        c.execute("SELECT role FROM Users WHERE username=%s", (user,))
+        c.execute("SELECT id, role FROM Users WHERE username=%s", (user,))
         role_res = c.fetchone()
-        role = role_res[0] if role_res else "Agent"
+        role = role_res[1] if role_res else "Member"
+        logged_in_uid = role_res[0] if role_res else 0
 
         customers = []
-        # ลูกค้ารายย่อย
-        c.execute("SELECT id, name FROM Customers ORDER BY id DESC")
-        for row in c.fetchall():
-            customers.append((row[0], row[1]))
-
-        # ผู้ใช้ระบบ ใช้คำนำหน้าว่า "user: [ชื่อผู้ใช้]" ตามที่ต้องการ
-        c.execute("SELECT id, username, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_total FROM Users ORDER BY id DESC")
-        for row in c.fetchall():
-            customers.append((f"user_{row[0]}", f"user: {row[1]}"))
+        
+        # คัดกรองรายชื่อตามสิทธิ์ (Admin เห็นหมด, Agent/Member เห็นเฉพาะตัวเองและลูกข่าย)
+        if role == 'Admin' or role == 'Master Agent':
+            c.execute("SELECT id, name FROM Customers ORDER BY id DESC")
+            for row in c.fetchall():
+                customers.append((str(row[0]), row[1]))
+            c.execute("SELECT id, username FROM Users ORDER BY id DESC")
+            for row in c.fetchall():
+                customers.append((f"user_{row[0]}", f"user: {row[1]}"))
+        else:
+            customers.append((f"user_{logged_in_uid}", f"user: {user} (บัญชีตัวเอง)"))
+            
+            c.execute("SELECT id, name FROM Customers WHERE owner_username=%s ORDER BY id DESC", (user,))
+            for row in c.fetchall():
+                customers.append((str(row[0]), row[1]))
+                
+            c.execute("SELECT id, username FROM Users WHERE parent_username=%s ORDER BY id DESC", (user,))
+            for row in c.fetchall():
+                customers.append((f"user_{row[0]}", f"user: {row[1]}"))
 
         if not customer_id and customers:
             customer_id = customers[0][0]
@@ -518,7 +539,6 @@ def portal_page(user: str, market: str, draw: str, customer_id: int = None):
                 current_customer_name = cust[1]
                 break
 
-        # ดึงเรตตามรายชื่อที่เลือก ณ ขณะนั้น (ให้ดึงครบทุกคอลัมน์ทั้งอัตราจ่ายและส่วนลด)
         user_rates = {"pay_3d": 500, "pay_3tod": 100, "pay_2d": 70, "pay_run_top": 3.2, "pay_run_bot": 4.2, "disc_total": 0, "disc_3d": 0, "disc_2d": 0, "disc_run": 0}
         if str(customer_id).startswith("user_"):
             u_id = str(customer_id).replace("user_", "")
@@ -539,6 +559,7 @@ def portal_page(user: str, market: str, draw: str, customer_id: int = None):
                     "pay_run_top": float(cr[3] or 3.2), "pay_run_bot": float(cr[4] or 4.2),
                     "disc_3d": float(cr[5] or 0), "disc_2d": float(cr[6] or 0), "disc_run": float(cr[7] or 0), "disc_total": float(cr[8] or 0)
                 })
+
         c.execute("SELECT close_time FROM LotteryCampaigns WHERE lotto_name=%s AND draw_date=%s", (market, draw))
         cr_res = c.fetchone()
         close_time = cr_res[0] if cr_res and cr_res[0] else ""
@@ -547,7 +568,8 @@ def portal_page(user: str, market: str, draw: str, customer_id: int = None):
         drafts = c.fetchall()
 
         b_closed, b_3d, b_2d = get_blocked_display_data(draw)
-        
+        conn.close()
+
         return Template(PORTAL_TEMPLATE).render(
             username=user, role=role, market=market, draw_date=draw,
             customers=customers, customer_id=customer_id, current_customer_name=current_customer_name,
@@ -569,7 +591,7 @@ def portal_add_draft(user: str = Form(...), market: str = Form(...), draw: str =
     return RedirectResponse(url=f"/portal?user={user}&market={market}&draw={draw}&customer_id={customer_id}", status_code=303)
 
 
-# ================= 5. หน้าจอจัดการผู้ใช้ / สมาชิก (Admin Users) =================
+# ================= 5. หน้าจอจัดการผู้ใช้ / สมาชิก =================
 ADMIN_USERS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -579,31 +601,50 @@ ADMIN_USERS_TEMPLATE = """
 </head>
 <body>
     <div class="container my-4" style="max-width: 1100px;">
-        <h3 class="fw-bold mb-4 text-primary">👥 จัดการบัญชีผู้ใช้ / สมาชิก (ลิงก์ตรงกับระบบหลักแบบเรียลไทม์)</h3>
+        <h3 class="fw-bold mb-4 text-primary">👥 จัดการบัญชีผู้ใช้ / สมาชิกใต้สายงาน</h3>
         {% if msg %}<div class="alert alert-success">{{ msg }}</div>{% endif %}
         <div class="row">
             <div class="col-md-5">
                 <div class="card shadow p-4 bg-white">
-                    <h5 class="fw-bold text-success mb-3">⚙️ สร้างบัญชีผู้ใช้ใหม่</h5>
+                    <h5 class="fw-bold text-success mb-3">⚙️ สร้างบัญชีผู้ใช้ใต้สายงาน</h5>
                     <form method="POST" action="/admin-create-user">
                         <input type="hidden" name="admin_user" value="{{ username }}">
+                        
                         <div class="mb-2"><label class="small fw-bold">Username:</label><input type="text" name="new_username" class="form-control form-control-sm" required></div>
                         <div class="mb-2"><label class="small fw-bold">Password:</label><input type="password" name="new_password" class="form-control form-control-sm" required></div>
                         <div class="mb-3"><label class="small fw-bold">สิทธิ์ (Role):</label>
                             <select name="role" class="form-select form-select-sm">
-                                <option value="Master Agent">Master Agent</option>
-                                <option value="Agent">Agent</option>
-                                <option value="Member">Member</option>
-                                <option value="Admin">Admin</option>
+                                <option value="Agent">Agent (ตัวแทน)</option>
+                                <option value="Member">Member (สมาชิก)</option>
                             </select>
                         </div>
-                        <button type="submit" class="btn btn-success w-100 fw-bold">💾 บันทึกผู้ใช้</button>
+                        
+                        <hr class="my-2">
+                        <h6 class="fw-bold text-primary small">💰 อัตราจ่าย (Pay Rate)</h6>
+                        <div class="row g-2 mb-2">
+                            <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">3ตรง:</label><input type="number" step="any" name="pay_3d" class="form-control form-control-sm" value="500"></div>
+                            <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">3โต๊ด:</label><input type="number" step="any" name="pay_3tod" class="form-control form-control-sm" value="100"></div>
+                            <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">2ตัว:</label><input type="number" step="any" name="pay_2d" class="form-control form-control-sm" value="70"></div>
+                            <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">วิ่งบน:</label><input type="number" step="any" name="pay_run_top" class="form-control form-control-sm" value="3.2"></div>
+                            <div class="col-6"><label class="extra-small text-danger" style="font-size:0.75rem;">วิ่งล่าง:</label><input type="number" step="any" name="pay_run_bot" class="form-control form-control-sm" value="4.2"></div>
+                        </div>
+
+                        <hr class="my-2">
+                        <h6 class="fw-bold text-success small">📉 ส่วนลด (%)</h6>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 3ตัว (%):</label><input type="number" step="any" name="disc_3d" class="form-control form-control-sm" value="0"></div>
+                            <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 2ตัว (%):</label><input type="number" step="any" name="disc_2d" class="form-control form-control-sm" value="0"></div>
+                            <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลดวิ่ง (%):</label><input type="number" step="any" name="disc_run" class="form-control form-control-sm" value="0"></div>
+                            <div class="col-6"><label class="extra-small text-success fw-bold" style="font-size:0.75rem;">ส่วนลดรวม (%):</label><input type="number" step="any" name="disc_total" class="form-control form-control-sm" value="0"></div>
+                        </div>
+
+                        <button type="submit" class="btn btn-success w-100 fw-bold">💾 บันทึกสร้างบัญชีผู้ใช้</button>
                     </form>
                 </div>
             </div>
             <div class="col-md-7">
                 <div class="card shadow p-4 bg-white">
-                    <h5 class="fw-bold text-primary mb-3">🗂️ รายชื่อสมาชิกใต้สายงาน (ตาราง Users)</h5>
+                    <h5 class="fw-bold text-primary mb-3">🗂️ รายชื่อสมาชิกใต้สายงาน</h5>
                     <table class="table table-striped table-bordered text-center align-middle" style="font-size: 0.85rem;">
                         <thead class="table-dark"><tr><th>ID</th><th>Username</th><th>สิทธิ์</th><th>จัดการ</th></tr></thead>
                         <tbody>
@@ -614,6 +655,8 @@ ADMIN_USERS_TEMPLATE = """
                                 <td><span class="badge bg-secondary">{{ u[3] }}</span></td>
                                 <td><a href="/edit-user?id={{ u[0] }}&user={{ username }}" class="btn btn-sm btn-warning">แก้ไข</a></td>
                             </tr>
+                            {% else %}
+                            <tr><td colspan="4" class="text-muted">ยังไม่มีผู้ใช้ใต้สายงาน</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
@@ -632,25 +675,41 @@ def admin_users_page(user: str, msg: str = None):
         c = conn.cursor()
         c.execute("SELECT role FROM Users WHERE username=%s", (user,))
         role = c.fetchone()[0]
-        c.execute("SELECT id, username, password, role FROM Users ORDER BY id DESC")
+        
+        # กรองข้อมูลให้เห็นเฉพาะสายงาน
+        if role == 'Admin' or role == 'Master Agent':
+            c.execute("SELECT id, username, password, role FROM Users ORDER BY id DESC")
+        else:
+            c.execute("SELECT id, username, password, role FROM Users WHERE parent_username=%s ORDER BY id DESC", (user,))
+        
         users = c.fetchall()
         conn.close()
     except: role, users = "Agent", []
     return Template(ADMIN_USERS_TEMPLATE).render(username=user, role=role, users=users, msg=msg)
 
 @app.post("/admin-create-user")
-def admin_create_user(admin_user: str = Form(...), new_username: str = Form(...), new_password: str = Form(...), role: str = Form(...)):
+def admin_create_user(
+    admin_user: str = Form(...), new_username: str = Form(...), new_password: str = Form(...), role: str = Form(...),
+    pay_3d: float = Form(500), pay_3tod: float = Form(100), pay_2d: float = Form(70), 
+    pay_run_top: float = Form(3.2), pay_run_bot: float = Form(4.2), 
+    disc_3d: float = Form(0), disc_2d: float = Form(0), disc_run: float = Form(0), disc_total: float = Form(0)
+):
     try:
         conn = connect_db()
         c = conn.cursor()
-        c.execute("INSERT INTO Users (username, password, role) VALUES (%s, %s, %s)", (new_username, new_password, role))
+        c.execute("""
+            INSERT INTO Users (
+                username, password, role, parent_username,
+                pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, 
+                disc_3d, disc_2d, disc_run, disc_total
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (new_username, new_password, role, admin_user, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total))
         conn.commit()
         conn.close()
-        msg = f"สร้างผู้ใช้ '{new_username}' สำเร็จ!"
+        msg = f"สร้างผู้ใช้ '{new_username}' ภายใต้สายงานสำเร็จ!"
     except Exception as e:
         msg = f"Error: {e}"
     return RedirectResponse(url=f"/admin-users?user={admin_user}&msg={msg}", status_code=303)
-
 
 # ================= 6. หน้าจอแก้ไขข้อมูลผู้ใช้ (Edit User) =================
 EDIT_USER_TEMPLATE = """
