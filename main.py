@@ -4,9 +4,13 @@ from jinja2 import Template
 import psycopg2
 from datetime import datetime, timedelta
 from fastapi.staticfiles import StaticFiles
+import os  # <-- เพิ่มบรรทัดนี้
 
 app = FastAPI(title="LuckyNumber Agent Portal - Full Enterprise Unified")
-# เพิ่มบรรทัดนี้ลงไปเพื่อให้ระบบโหลดรูปภาพจากโฟลเดอร์ static ได้
+
+# ตรวจสอบและสร้างโฟลเดอร์ static อัตโนมัติหากยังไม่มี เพื่อป้องกันระบบล่ม
+if not os.path.exists("static"):
+    os.makedirs("static")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 DB_URI = "postgresql://postgres.mpyswshlrxwpirzdexrn:Clublifekorat3888@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
