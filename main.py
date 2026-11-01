@@ -3,8 +3,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Template
 import psycopg2
 from datetime import datetime, timedelta
+from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="LuckyNumber Agent Portal - Full Enterprise Unified")
+# เพิ่มบรรทัดนี้ลงไปเพื่อให้ระบบโหลดรูปภาพจากโฟลเดอร์ static ได้
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 DB_URI = "postgresql://postgres.mpyswshlrxwpirzdexrn:Clublifekorat3888@aws-0-ap-northeast-1.pooler.supabase.com:6543/postgres"
 
@@ -117,34 +120,27 @@ def login_action(username: str = Form(...), password: str = Form(...)):
     except:
         return RedirectResponse(url="/login?error=DB%20Error", status_code=status.HTTP_303_SEE_OTHER)
 
-# ================= Layout หลัก (รวมเมนูด้านบนครอบคลุมทุกฟังก์ชัน) =================
+
+# ================= Layout หลัก (รวมเมนูด้านบนครอบคลุมทุกฟังก์ชัน และซ่อนเมนูสำหรับผู้ใช้อื่น) =================
 UNIFIED_LAYOUT = """
 <style>
-    /* ตั้งค่าพื้นฐานและการตัดคำไม่ให้ล้นจอ */
     * { box-sizing: border-box; }
     body { background-color: #f7e6d0; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 0; overflow-x: hidden; }
-    
-    /* Top Navbar ด้านบนแบบยืดหยุ่นตามหน้าจอ */
     .top-navbar { background-color: #000; border-bottom: 2px solid #d4af37; padding: 8px 15px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; width: 100%; }
     .logo-text { font-family: 'Georgia', serif; font-style: italic; font-weight: bold; font-size: 1.3rem; color: #f3e5ab; margin-right: 10px; white-space: nowrap; }
     .top-nav-menu { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
     .top-nav-menu a { color: #fff; text-decoration: none; font-size: 0.8rem; padding: 4px 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid #333; white-space: nowrap; }
     .top-nav-menu a:hover, .top-nav-menu a.active { background: #d4af37; color: #000; font-weight: bold; }
     
-    /* โครงสร้างหลักแบบ Grid / Flex ที่ปรับขนาดพอดีจออัตโนมัติ */
     .main-container { display: flex; width: 100vw; height: calc(100vh - 48px); overflow: hidden; }
     .sidebar-left { width: 240px; background-color: #000; color: white; border-right: 2px solid #d4af37; padding: 12px; flex-shrink: 0; overflow-y: auto; }
     .content-center { flex-grow: 1; padding: 15px; overflow-y: auto; background-color: #f7e6d0; height: 100%; }
     .sidebar-right { width: 280px; background-color: rgba(255,255,255,0.7); border-left: 2px solid #d4af37; padding: 12px; flex-shrink: 0; overflow-y: auto; }
     
-    /* ควบคุมขนาดตารางและฟอร์มไม่ให้ล้นหน้าจอ */
     .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     .card { width: 100%; max-width: 100%; word-break: break-word; }
-    
-    /* นาฬิกานับถอยหลังลอยตัวมุมขวาบน */
     .sticky-timer { position: sticky; top: 10px; z-index: 1000; float: right; background: #dc3545; color: white; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 2px solid #fff; }
 
-    /* ปรับขนาดอัตโนมัติเมื่อเปิดบนจอขนาดเล็กหรือแท็บเล็ต */
     @media (max-width: 992px) {
         .main-container { flex-direction: column; height: auto; overflow: auto; }
         .sidebar-left, .sidebar-right { width: 100%; max-height: 200px; }
@@ -157,18 +153,21 @@ UNIFIED_LAYOUT = """
         <div class="top-nav-menu">
             <a href="/dashboard?user={{ username }}">แดชบอร์ด</a>
             <a href="/select-market?user={{ username }}">บันทึกโพย</a>
+            <a href="/agent-reports?user={{ username }}">รายงานยอดขาย</a>
+            <!-- ซ่อนเมนูตั้งค่าเหล่านี้หากไม่ใช่ Admin -->
+            {% if role == 'Admin' or role == 'Master Agent' %}
             <a href="/admin-campaigns?user={{ username }}">จัดการงวดหวย</a>
             <a href="/admin-blocked?user={{ username }}">เลขอั้น</a>
             <a href="/admin-users?user={{ username }}">จัดการผู้ใช้</a>
             <a href="/customer-rates-page?user={{ username }}">เรตลูกค้า</a>
             <a href="/agent-settlement?user={{ username }}">บัญชีรับ-จ่าย</a>
-            <a href="/agent-reports?user={{ username }}">รายงานยอดขาย</a>
-            <a href="/change-password?user={{ username }}" class="text-warning">เปลี่ยนรหัสผ่าน</a>
             <a href="/system-reset?user={{ username }}" class="text-danger">รีเซ็ตระบบ</a>
+            {% endif %}
+            <a href="/change-password?user={{ username }}" class="text-warning">เปลี่ยนรหัสผ่าน</a>
         </div>
     </div>
     <div class="d-flex align-items-center gap-2">
-        <span class="text-warning small">ผู้ใช้งาน: <b>{{ username }} ({{ role }})</b></span>
+        <span class="text-warning small">สถานะ: <b>{{ role }} ({{ username }})</b></span>
         <a href="/login" class="btn btn-danger btn-sm fw-bold px-2 py-1" style="font-size: 0.75rem;">ออกจากระบบ</a>
     </div>
 </div>
@@ -197,7 +196,24 @@ def dashboard_page(user: str):
     """
     return html
 
-# ================= 3. หน้าเลือกตลาด / งวดหวย =================
+# ================= 3. หน้าเลือกตลาด / งวดหวย (แยกหมวดหมู่ + ใส่โลโก้ + ปรับขนาดอัตโนมัติ) =================
+
+def get_lotto_logo(lotto_name):
+    """ ฟังก์ชันช่วยเลือกรูปโลโก้ตามชื่อหวย """
+    name = lotto_name.lower()
+    if "ลาวพัฒนา" in name: return "/static/ลาวพัฒนาโลโก้.png"
+    elif "รัฐบาล" in name: return "/static/สำนักงานสลากกินแบ่งรัฐบาล.png"
+    elif "ฮานอย" in name: return "/static/สัญลักษณ์หวยฮานอย.png"
+    elif "nasdaq" in name: return "/static/image_4326b7.png"
+    elif "s&p" in name: return "/static/image_10cf86.png"
+    elif "dow jones" in name or "ดาวโจนส์" in name: return "/static/dow jones logo.png"
+    elif "nikkei" in name or "นิเคอิ" in name: return "/static/image_0ff5ed.png"
+    elif "dax" in name or "เยอรมัน" in name: return "/static/image_0ff24b.png"
+    elif "nifty" in name or "อินเดีย" in name: return "/static/image_0feba1.jpg"
+    elif "kse" in name or "ปากีสถาน" in name: return "/static/image_0f892c.png"
+    elif "ลาว" in name: return "https://upload.wikimedia.org/wikipedia/commons/5/56/Flag_of_Laos.svg" # ลาวอื่นๆ ใช้ธงชาติ
+    else: return "https://cdn-icons-png.flaticon.com/512/10383/10383210.png" # รูปสัญลักษณ์สุ่มหวยพื้นฐาน
+
 SELECT_MARKET_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -205,23 +221,43 @@ SELECT_MARKET_TEMPLATE = """
     <meta charset="UTF-8"><title>เลือกลอตเตอรี่ / ตลาด</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     """ + UNIFIED_LAYOUT + """
+    <style>
+        .market-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; }
+        .market-card { display: flex; align-items: center; padding: 15px; border-radius: 12px; background: #fff; box-shadow: 0 4px 6px rgba(0,0,0,0.1); border-left: 6px solid #d4af37; text-decoration: none; color: inherit; transition: transform 0.2s, box-shadow 0.2s; }
+        .market-card:hover { transform: translateY(-5px); box-shadow: 0 8px 15px rgba(0,0,0,0.2); }
+        .market-logo { width: 55px; height: 55px; object-fit: contain; border-radius: 50%; margin-right: 15px; background: #f8f9fa; padding: 3px; border: 1px solid #ccc; }
+        .market-info { flex-grow: 1; overflow: hidden; }
+        .market-title { font-size: 1.05rem; font-weight: bold; color: #000; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .market-meta { font-size: 0.8rem; color: #666; }
+        .category-header { font-weight: bold; color: #dc3545; border-bottom: 2px solid #dc3545; padding-bottom: 5px; margin-top: 25px; margin-bottom: 15px; font-size: 1.2rem; }
+    </style>
 </head>
 <body>
-    <div class="container my-4" style="max-width: 900px;">
-        <h3 class="fw-bold mb-3">📌 เลือกลอตเตอรี่ / ตลาดหวยที่เปิดให้แทง</h3>
-        <div class="list-group">
+    <div class="container-fluid my-4 px-4">
+        <h3 class="fw-bold mb-1 text-primary">📌 ตลาดหวยที่เปิดรับแทง</h3>
+        <p class="text-muted small">จัดเรียงและปรับขนาดหน้าจออัตโนมัติ</p>
+
+        {% for cat_name, markets in categories.items() %}
+        <h5 class="category-header">🎯 หมวดหมู่: {{ cat_name }}</h5>
+        <div class="market-grid">
             {% for m in markets %}
-            <a href="/portal?user={{ username }}&market={{ m[1] }}&draw={{ m[2] }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center py-3 mb-2 border rounded shadow-sm bg-white">
-                <div>
-                    <h5 class="mb-1 text-primary fw-bold">🎟️ {{ m[1] }}</h5>
-                    <small class="text-muted">งวดวันที่: <b>{{ m[2] }}</b> | ปิดรับ: <span class="text-danger fw-bold">{{ m[4] if m[4] else '-' }}</span> | สถานะ: <span class="badge bg-success">{{ m[3] }}</span></small>
+            <a href="/portal?user={{ username }}&market={{ m.name }}&draw={{ m.draw }}" class="market-card">
+                <img src="{{ m.logo }}" alt="logo" class="market-logo" onerror="this.src='https://cdn-icons-png.flaticon.com/512/10383/10383210.png'">
+                <div class="market-info">
+                    <div class="market-title">{{ m.name }}</div>
+                    <div class="market-meta">งวด: <b>{{ m.draw }}</b></div>
+                    <div class="market-meta">ปิดรับ: <span class="text-danger fw-bold">{{ m.close if m.close else '-' }}</span></div>
                 </div>
-                <span class="btn btn-outline-primary btn-sm fw-bold">เข้าคีย์โพย ➡️</span>
+                <div class="ms-2 text-end">
+                    <span class="badge bg-success shadow-sm">{{ m.status }}</span>
+                    <div class="text-primary fw-bold mt-1" style="font-size:0.75rem;">คีย์โพย ➡️</div>
+                </div>
             </a>
-            {% else %}
-            <div class="alert alert-warning text-center">ยังไม่มีตลาดหวยที่เปิดอยู่ในขณะนี้ (สามารถไปเพิ่มงวดได้ที่เมนู "จัดการงวดหวย")</div>
             {% endfor %}
         </div>
+        {% else %}
+        <div class="alert alert-warning text-center mt-4 shadow-sm fw-bold">ยังไม่มีตลาดหวยที่เปิดอยู่ในขณะนี้</div>
+        {% endfor %}
     </div>
 </body>
 </html>
@@ -234,13 +270,32 @@ def select_market(user: str):
         c = conn.cursor()
         c.execute("SELECT role FROM Users WHERE username=%s", (user,))
         res = c.fetchone()
-        role = res[0] if res else "Agent"
+        role = res[0] if res else "Member"
         c.execute("SELECT id, lotto_name, draw_date, status, close_time FROM LotteryCampaigns WHERE status='Active' ORDER BY id DESC")
-        markets = c.fetchall()
+        raw_markets = c.fetchall()
         conn.close()
-    except:
-        role, markets = "Agent", []
-    return Template(SELECT_MARKET_TEMPLATE).render(username=user, role=role, markets=markets)
+
+        # จัดหมวดหมู่หวย
+        categories = {"รัฐบาลไทย": [], "ฮานอย": [], "ลาว": [], "หุ้นต่างประเทศ": [], "อื่นๆ": []}
+        for m in raw_markets:
+            m_data = {"id": m[0], "name": m[1], "draw": m[2], "status": m[3], "close": m[4], "logo": get_lotto_logo(m[1])}
+            
+            if "รัฐบาล" in m[1]: categories["รัฐบาลไทย"].append(m_data)
+            elif "ฮานอย" in m[1]: categories["ฮานอย"].append(m_data)
+            elif "ลาว" in m[1]: categories["ลาว"].append(m_data)
+            elif any(k in m[1].lower() for k in ["หุ้น", "nasdaq", "dow", "s&p", "nikkei", "dax", "nifty", "kse"]): 
+                categories["หุ้นต่างประเทศ"].append(m_data)
+            else: 
+                categories["อื่นๆ"].append(m_data)
+
+        # ลบหมวดหมู่ที่ไม่มีหวยออกจากการแสดงผล
+        categories = {k: v for k, v in categories.items() if len(v) > 0}
+
+    except Exception as e:
+        print("Market Load Error:", e)
+        role, categories = "Member", {}
+        
+    return Template(SELECT_MARKET_TEMPLATE).render(username=user, role=role, categories=categories)
 
 
 # ================= Helper ดึงเลขอั้น =================
@@ -357,11 +412,15 @@ PORTAL_TEMPLATE = """
                 </table>
             </div>
 
-            <div class="menu-title">เมนูด่วน</div>
+            <div class="menu-title mt-4">เมนูด่วน</div>
             <a href="/select-market?user={{ username }}" class="menu-item">▶ เปลี่ยนตลาด/งวด</a>
-            <a href="/admin-users?user={{ username }}" class="menu-item text-warning">👥 จัดการสมาชิก/ผู้ใช้</a>
             <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานยอดขาย</a>
-        </div>
+            
+            <!-- ซ่อนเมนูจัดการผู้ใช้หากไม่ใช่ Admin -->
+            {% if role == 'Admin' or role == 'Master Agent' %}
+            <a href="/admin-users?user={{ username }}" class="menu-item text-warning">👥 จัดการสมาชิก/ผู้ใช้</a>
+            <a href="/customer-rates-page?user={{ username }}" class="menu-item text-info">⚙️ ตั้งค่าเรตลูกค้า</a>
+            {% endif %}
 
         <!-- Content ตรงกลาง: คีย์โพย -->
         <div class="content-center">
