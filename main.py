@@ -504,14 +504,16 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None):
     try:
         conn = connect_db()
         c = conn.cursor()
+        
+        # ตรวจสอบสิทธิ์ว่าเป็นใคร
         c.execute("SELECT id, role FROM Users WHERE username=%s", (user,))
         role_res = c.fetchone()
-        role = role_res[1] if role_res else "Member"
+        role = role_res[1].strip() if role_res else "Member"
         logged_in_uid = role_res[0] if role_res else 0
 
         customers = []
         
-        # คัดกรองรายชื่อตามสิทธิ์ (Admin เห็นหมด, Agent/Member เห็นเฉพาะตัวเองและลูกข่าย)
+        # กรองรายชื่อ: ถ้าเป็น Admin ให้เห็นทุกคน / ถ้าเป็น Agent ให้เห็นแค่ตัวเองและลูกข่าย
         if role == 'Admin' or role == 'Master Agent':
             c.execute("SELECT id, name FROM Customers ORDER BY id DESC")
             for row in c.fetchall():
@@ -520,12 +522,13 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None):
             for row in c.fetchall():
                 customers.append((f"user_{row[0]}", f"user: {row[1]}"))
         else:
+            # 1. ใส่ชื่อตัวเองลงไปให้เลือกแทงได้
             customers.append((f"user_{logged_in_uid}", f"user: {user} (บัญชีตัวเอง)"))
-            
+            # 2. ลูกค้ารายย่อยเฉพาะใต้สายงาน
             c.execute("SELECT id, name FROM Customers WHERE owner_username=%s ORDER BY id DESC", (user,))
             for row in c.fetchall():
                 customers.append((str(row[0]), row[1]))
-                
+            # 3. ผู้ใช้ระบบเฉพาะใต้สายงาน
             c.execute("SELECT id, username FROM Users WHERE parent_username=%s ORDER BY id DESC", (user,))
             for row in c.fetchall():
                 customers.append((f"user_{row[0]}", f"user: {row[1]}"))
@@ -539,27 +542,42 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None):
                 current_customer_name = cust[1]
                 break
 
-        user_rates = {"pay_3d": 500, "pay_3tod": 100, "pay_2d": 70, "pay_run_top": 3.2, "pay_run_bot": 4.2, "disc_total": 0, "disc_3d": 0, "disc_2d": 0, "disc_run": 0}
+        # ดึงเรตอัตราจ่ายและส่วนลด (แก้ไขระบบป้องกันค่า Error ให้ดึงตรงเป๊ะ 100%)
+        user_rates = {"pay_3d": 500.0, "pay_3tod": 100.0, "pay_2d": 70.0, "pay_run_top": 3.2, "pay_run_bot": 4.2, "disc_total": 0.0, "disc_3d": 0.0, "disc_2d": 0.0, "disc_run": 0.0}
+        
         if str(customer_id).startswith("user_"):
             u_id = str(customer_id).replace("user_", "")
             c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Users WHERE id=%s", (u_id,))
             ur = c.fetchone()
             if ur:
                 user_rates.update({
-                    "pay_3d": float(ur[0] or 500), "pay_3tod": float(ur[1] or 100), "pay_2d": float(ur[2] or 70), 
-                    "pay_run_top": float(ur[3] or 3.2), "pay_run_bot": float(ur[4] or 4.2),
-                    "disc_3d": float(ur[5] or 0), "disc_2d": float(ur[6] or 0), "disc_run": float(ur[7] or 0), "disc_total": float(ur[8] or 0)
+                    "pay_3d": float(ur[0]) if ur[0] is not None else 500.0,
+                    "pay_3tod": float(ur[1]) if ur[1] is not None else 100.0,
+                    "pay_2d": float(ur[2]) if ur[2] is not None else 70.0,
+                    "pay_run_top": float(ur[3]) if ur[3] is not None else 3.2,
+                    "pay_run_bot": float(ur[4]) if ur[4] is not None else 4.2,
+                    "disc_3d": float(ur[5]) if ur[5] is not None else 0.0,
+                    "disc_2d": float(ur[6]) if ur[6] is not None else 0.0,
+                    "disc_run": float(ur[7]) if ur[7] is not None else 0.0,
+                    "disc_total": float(ur[8]) if ur[8] is not None else 0.0
                 })
         else:
             c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Customers WHERE id=%s", (customer_id,))
             cr = c.fetchone()
             if cr:
                 user_rates.update({
-                    "pay_3d": float(cr[0] or 500), "pay_3tod": float(cr[1] or 100), "pay_2d": float(cr[2] or 70), 
-                    "pay_run_top": float(cr[3] or 3.2), "pay_run_bot": float(cr[4] or 4.2),
-                    "disc_3d": float(cr[5] or 0), "disc_2d": float(cr[6] or 0), "disc_run": float(cr[7] or 0), "disc_total": float(cr[8] or 0)
+                    "pay_3d": float(cr[0]) if cr[0] is not None else 500.0,
+                    "pay_3tod": float(cr[1]) if cr[1] is not None else 100.0,
+                    "pay_2d": float(cr[2]) if cr[2] is not None else 70.0,
+                    "pay_run_top": float(cr[3]) if cr[3] is not None else 3.2,
+                    "pay_run_bot": float(cr[4]) if cr[4] is not None else 4.2,
+                    "disc_3d": float(cr[5]) if cr[5] is not None else 0.0,
+                    "disc_2d": float(cr[6]) if cr[6] is not None else 0.0,
+                    "disc_run": float(cr[7]) if cr[7] is not None else 0.0,
+                    "disc_total": float(cr[8]) if cr[8] is not None else 0.0
                 })
 
+        # ดึงเวลาปิดรับและโพยร่าง
         c.execute("SELECT close_time FROM LotteryCampaigns WHERE lotto_name=%s AND draw_date=%s", (market, draw))
         cr_res = c.fetchone()
         close_time = cr_res[0] if cr_res and cr_res[0] else ""
