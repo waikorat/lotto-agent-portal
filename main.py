@@ -127,13 +127,18 @@ def login_action(username: str = Form(...), password: str = Form(...)):
         c.execute("SELECT username, role FROM Users WHERE username=%s AND password=%s", (username, password))
         user = c.fetchone()
         conn.close()
+        
         if user:
-            return RedirectResponse(url=f"/dashboard?user={username}", status_code=status.HTTP_303_SEE_OTHER)
+            role = user[1].strip()
+            # ถ้าเป็น Admin ให้ไป Dashboard / แต่ถ้าเป็น Agent, Member ให้ตรงไปที่หน้าเลือกงวดหวยเลย
+            if role in ['Admin', 'Master Agent']:
+                return RedirectResponse(url=f"/dashboard?user={username}", status_code=status.HTTP_303_SEE_OTHER)
+            else:
+                return RedirectResponse(url=f"/select-market?user={username}", status_code=status.HTTP_303_SEE_OTHER)
         else:
             return RedirectResponse(url="/login?error=Username%20or%20Password%20ไม่ถูกต้อง", status_code=status.HTTP_303_SEE_OTHER)
     except:
         return RedirectResponse(url="/login?error=DB%20Error", status_code=status.HTTP_303_SEE_OTHER)
-
 
 # ================= Layout หลัก (รวมเมนูด้านบนครอบคลุมทุกฟังก์ชัน และซ่อนเมนูสำหรับผู้ใช้อื่น) =================
 UNIFIED_LAYOUT = """
@@ -165,11 +170,12 @@ UNIFIED_LAYOUT = """
     <div class="d-flex align-items-center flex-wrap">
         <span class="logo-text">LuckyNumber ERP</span>
         <div class="top-nav-menu">
-            <a href="/dashboard?user={{ username }}">แดชบอร์ด</a>
             <a href="/select-market?user={{ username }}">บันทึกโพย</a>
             <a href="/agent-reports?user={{ username }}">รายงานยอดขาย</a>
-            <!-- ซ่อนเมนูตั้งค่าเหล่านี้หากไม่ใช่ Admin -->
+            
+            <!-- ซ่อนเมนูแดชบอร์ดและตั้งค่าต่างๆ หากไม่ใช่ Admin -->
             {% if role == 'Admin' or role == 'Master Agent' %}
+            <a href="/dashboard?user={{ username }}">แดชบอร์ด</a>
             <a href="/admin-campaigns?user={{ username }}">จัดการงวดหวย</a>
             <a href="/admin-blocked?user={{ username }}">เลขอั้น</a>
             <a href="/admin-users?user={{ username }}">จัดการผู้ใช้</a>
@@ -177,6 +183,7 @@ UNIFIED_LAYOUT = """
             <a href="/agent-settlement?user={{ username }}">บัญชีรับ-จ่าย</a>
             <a href="/system-reset?user={{ username }}" class="text-danger">รีเซ็ตระบบ</a>
             {% endif %}
+            
             <a href="/change-password?user={{ username }}" class="text-warning">เปลี่ยนรหัสผ่าน</a>
         </div>
     </div>
@@ -194,8 +201,12 @@ def dashboard_page(user: str):
     c = conn.cursor()
     c.execute("SELECT role FROM Users WHERE username=%s", (user,))
     res = c.fetchone()
-    role = res[0] if res else "Agent"
+    role = res[0].strip() if res else "Member"
     conn.close()
+    
+    # ถ้าบังเอิญพิมพ์ URL เข้ามา แล้วไม่ใช่ Admin ให้เด้งไปหน้าเลือกงวดหวยทันที
+    if role not in ['Admin', 'Master Agent']:
+        return RedirectResponse(url=f"/select-market?user={user}", status_code=status.HTTP_303_SEE_OTHER)
     
     html = """
     <!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><title>Dashboard</title>
@@ -203,9 +214,9 @@ def dashboard_page(user: str):
     <body class="bg-light">
     """ + UNIFIED_LAYOUT.replace("{{ username }}", user).replace("{{ role }}", role) + """
     <div class="container my-5 text-center">
-        <h1 class="text-primary fw-bold mb-3">ยินดีต้อนรับสู่ระบบจัดการลอตเตอรี่ออนไลน์ (Enterprise Unified)</h1>
-        <p class="text-muted">เลือกเมนูด้านบนเพื่อเริ่มต้นใช้งานระบบบันทึกโพย จัดการสมาชิก หรือตรวจสอบรายงาน</p>
-        <a href="/select-market?user=""" + user + """" class="btn btn-warning btn-lg fw-bold px-5 mt-3">🎟️ เริ่มต้นบันทึกโพยหวย</a>
+        <h1 class="text-primary fw-bold mb-3">ยินดีต้อนรับสู่ระบบจัดการลอตเตอรี่ (Admin Portal)</h1>
+        <p class="text-muted">ระบบสำหรับผู้ดูแลจัดการภาพรวม</p>
+        <a href="/select-market?user=""" + user + """" class="btn btn-warning btn-lg fw-bold px-5 mt-3">🎟️ ไปยังหน้าตลาดหวย</a>
     </div></body></html>
     """
     return html
