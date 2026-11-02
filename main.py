@@ -22,11 +22,14 @@ def get_thai_time():
     return datetime.utcnow() + timedelta(hours=7)
 
 # --- Startup Migration ตารางและคอลัมน์พื้นฐานทั้งหมด ---
+# --- Startup Migration ตารางและคอลัมน์พื้นฐานทั้งหมด (ฉบับแก้ไขคอลัมน์ target_id) ---
 @app.on_event("startup")
 def startup_agent_db():
     try:
         conn = connect_db()
         c = conn.cursor()
+        
+        # 1. สร้างตาราง AgentSettlements
         c.execute("""
             CREATE TABLE IF NOT EXISTS AgentSettlements (
                 id SERIAL PRIMARY KEY,
@@ -38,6 +41,8 @@ def startup_agent_db():
                 timestamp TEXT
             );
         """)
+        
+        # 2. สร้างตาราง CustomerLottoRates
         c.execute("""
             CREATE TABLE IF NOT EXISTS CustomerLottoRates (
                 id SERIAL PRIMARY KEY,
@@ -55,6 +60,33 @@ def startup_agent_db():
                 disc_total NUMERIC(5,2)
             );
         """)
+        
+        # 3. เพิ่มคอลัมน์ที่ขาดหายในตาราง CustomerLottoRates อัตโนมัติ
+        rate_cols_to_add = [
+            ("target_type", "VARCHAR(20) DEFAULT 'Customer'"),
+            ("target_id", "VARCHAR(100)"),
+            ("lotto_name", "VARCHAR(100)"),
+            ("pay_3d", "NUMERIC(10,2) DEFAULT 500"),
+            ("pay_3tod", "NUMERIC(10,2) DEFAULT 100"),
+            ("pay_2d", "NUMERIC(10,2) DEFAULT 70"),
+            ("pay_run_top", "NUMERIC(10,2) DEFAULT 3.2"),
+            ("pay_run_bot", "NUMERIC(10,2) DEFAULT 4.2"),
+            ("disc_3d", "NUMERIC(5,2) DEFAULT 0"),
+            ("disc_2d", "NUMERIC(5,2) DEFAULT 0"),
+            ("disc_run", "NUMERIC(5,2) DEFAULT 0"),
+            ("disc_total", "NUMERIC(5,2) DEFAULT 0")
+        ]
+        for col_name, col_type in rate_cols_to_add:
+            c.execute(f"""
+                DO $$ 
+                BEGIN 
+                    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='customerlottorates' and column_name='{col_name}') THEN
+                        ALTER TABLE CustomerLottoRates ADD COLUMN {col_name} {col_type};
+                    END IF;
+                END $$;
+            """)
+
+        # 4. ตรวจสอบคอลัมน์ close_time ใน LotteryCampaigns
         c.execute("""
             DO $$ 
             BEGIN 
@@ -63,7 +95,9 @@ def startup_agent_db():
                 END IF;
             END $$;
         """)
-        columns_to_add = [
+
+        # 5. ตรวจสอบคอลัมน์ใน Users
+        user_cols_to_add = [
             ("parent_username", "VARCHAR(100) DEFAULT 'admin'"),
             ("pay_3d", "NUMERIC(10,2) DEFAULT 500"),
             ("pay_3tod", "NUMERIC(10,2) DEFAULT 100"),
@@ -75,7 +109,7 @@ def startup_agent_db():
             ("disc_run", "NUMERIC(5,2) DEFAULT 0"),
             ("disc_total", "NUMERIC(5,2) DEFAULT 0")
         ]
-        for col_name, col_type in columns_to_add:
+        for col_name, col_type in user_cols_to_add:
             c.execute(f"""
                 DO $$ 
                 BEGIN 
@@ -84,6 +118,8 @@ def startup_agent_db():
                     END IF;
                 END $$;
             """)
+
+        # 6. ตรวจสอบคอลัมน์ใน Customers
         c.execute("""
             DO $$ 
             BEGIN 
@@ -92,10 +128,11 @@ def startup_agent_db():
                 END IF;
             END $$;
         """)
+        
         conn.commit()
         conn.close()
     except Exception as e:
-        print("Startup Error:", e)
+        print("Startup Migration Error:", e)
 
 # ================= Helper ดึงสัญลักษณ์โลโก้ =================
 def get_lotto_logo(lotto_name):
