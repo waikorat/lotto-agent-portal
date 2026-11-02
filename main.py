@@ -524,23 +524,36 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None):
         conn = connect_db()
         c = conn.cursor()
         
-        c.execute("SELECT id, role FROM Users WHERE username=%s", (user,))
+        # ดึงข้อมูล Role และ ID ของผู้ใช้ที่ล็อกอิน
+        c.execute("SELECT id, role FROM Users WHERE LOWER(username)=LOWER(%s)", (user,))
         role_res = c.fetchone()
         role = role_res[1].strip() if role_res else "Member"
         logged_in_uid = role_res[0] if role_res else 0
 
         customers = []
-        if role == 'Admin' or role == 'Master Agent':
+        
+        # เฉพาะสิทธิ์ 'admin' เท่านั้นที่ดึงรายชื่อได้ทั้งหมด
+        # ผู้ใช้ระดับอื่นทั้งหมด (Master Agent, Agent, Member) จะดึงเฉพาะสายงานของตนเอง
+        if role.lower() == 'admin':
             c.execute("SELECT id, name FROM Customers ORDER BY id DESC")
-            for row in c.fetchall(): customers.append((str(row[0]), row[1]))
+            for row in c.fetchall():
+                customers.append((str(row[0]), row[1]))
             c.execute("SELECT id, username FROM Users ORDER BY id DESC")
-            for row in c.fetchall(): customers.append((f"user_{row[0]}", f"user: {row[1]}"))
+            for row in c.fetchall():
+                customers.append((f"user_{row[0]}", f"user: {row[1]}"))
         else:
+            # 1. บัญชีของตนเอง
             customers.append((f"user_{logged_in_uid}", f"user: {user} (บัญชีตัวเอง)"))
-            c.execute("SELECT id, name FROM Customers WHERE owner_username=%s ORDER BY id DESC", (user,))
-            for row in c.fetchall(): customers.append((str(row[0]), row[1]))
-            c.execute("SELECT id, username FROM Users WHERE parent_username=%s ORDER BY id DESC", (user,))
-            for row in c.fetchall(): customers.append((f"user_{row[0]}", f"user: {row[1]}"))
+            
+            # 2. ลูกค้ารายย่อยที่สร้างโดยบัญชีนี้ (owner_username)
+            c.execute("SELECT id, name FROM Customers WHERE LOWER(owner_username)=LOWER(%s) ORDER BY id DESC", (user,))
+            for row in c.fetchall():
+                customers.append((str(row[0]), row[1]))
+                
+            # 3. ผู้ใช้ใต้สายงานที่บัญชีนี้เป็นผู้สร้างขึ้น (parent_username)
+            c.execute("SELECT id, username FROM Users WHERE LOWER(parent_username)=LOWER(%s) ORDER BY id DESC", (user,))
+            for row in c.fetchall():
+                customers.append((f"user_{row[0]}", f"user: {row[1]}"))
 
         if not customer_id and customers:
             customer_id = customers[0][0]
@@ -551,7 +564,7 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None):
                 current_customer_name = cust[1]
                 break
 
-        # ตรวจสอบเรตเฉพาะจากตาราง CustomerLottoRates ก่อน หากไม่มีให้ใช้เรตหลัก
+        # ดึงเรตอัตราจ่ายและส่วนลด
         user_rates = {"pay_3d": 500.0, "pay_3tod": 100.0, "pay_2d": 70.0, "pay_run_top": 3.2, "pay_run_bot": 4.2, "disc_total": 0.0, "disc_3d": 0.0, "disc_2d": 0.0, "disc_run": 0.0}
         
         c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM CustomerLottoRates WHERE target_id=%s AND lotto_name=%s", (str(customer_id), market))
