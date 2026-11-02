@@ -1,14 +1,14 @@
 from fastapi import FastAPI, Form, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from jinja2 import Template
 import psycopg2
 from datetime import datetime, timedelta
-from fastapi.staticfiles import StaticFiles
-import os  # <-- เพิ่มบรรทัดนี้
+import os
 
-app = FastAPI(title="LuckyNumber Agent Portal - Full Enterprise Unified")
+app = FastAPI(title="LuckyNumber Agent Portal - Enterprise Unified")
 
-# ตรวจสอบและสร้างโฟลเดอร์ static อัตโนมัติหากยังไม่มี เพื่อป้องกันระบบล่ม
+# ตรวจสอบและสร้างโฟลเดอร์ static อัตโนมัติหากยังไม่มี
 if not os.path.exists("static"):
     os.makedirs("static")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -21,7 +21,6 @@ def connect_db():
 def get_thai_time():
     return datetime.utcnow() + timedelta(hours=7)
 
-# --- Startup Migration ตารางและคอลัมน์พื้นฐานทั้งหมด ---
 # --- Startup Migration ตารางและคอลัมน์พื้นฐานทั้งหมด ---
 @app.on_event("startup")
 def startup_agent_db():
@@ -40,6 +39,23 @@ def startup_agent_db():
             );
         """)
         c.execute("""
+            CREATE TABLE IF NOT EXISTS CustomerLottoRates (
+                id SERIAL PRIMARY KEY,
+                target_type VARCHAR(20),
+                target_id VARCHAR(100),
+                lotto_name VARCHAR(100),
+                pay_3d NUMERIC(10,2),
+                pay_3tod NUMERIC(10,2),
+                pay_2d NUMERIC(10,2),
+                pay_run_top NUMERIC(10,2),
+                pay_run_bot NUMERIC(10,2),
+                disc_3d NUMERIC(5,2),
+                disc_2d NUMERIC(5,2),
+                disc_run NUMERIC(5,2),
+                disc_total NUMERIC(5,2)
+            );
+        """)
+        c.execute("""
             DO $$ 
             BEGIN 
                 IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='lotterycampaigns' and column_name='close_time') THEN
@@ -47,7 +63,6 @@ def startup_agent_db():
                 END IF;
             END $$;
         """)
-        # เพิ่ม parent_username เพื่อจำแนกสายงาน
         columns_to_add = [
             ("parent_username", "VARCHAR(100) DEFAULT 'admin'"),
             ("pay_3d", "NUMERIC(10,2) DEFAULT 500"),
@@ -69,7 +84,6 @@ def startup_agent_db():
                     END IF;
                 END $$;
             """)
-        # เพิ่มคอลัมน์เจ้าของสายงานในตาราง Customers
         c.execute("""
             DO $$ 
             BEGIN 
@@ -83,17 +97,107 @@ def startup_agent_db():
     except Exception as e:
         print("Startup Error:", e)
 
-@app.get("/", response_class=HTMLResponse)
-def index():
-    return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+# ================= Helper ดึงสัญลักษณ์โลโก้ =================
+def get_lotto_logo(lotto_name):
+    name = lotto_name.lower()
+    if "ลาวพัฒนา" in name: return "/static/ลาวพัฒนาโลโก้.png"
+    elif "รัฐบาล" in name: return "/static/สำนักงานสลากกินแบ่งรัฐบาล.png"
+    elif "ฮานอย" in name: return "/static/สัญลักษณ์หวยฮานอย.png"
+    elif "nasdaq" in name: return "/static/image_4326b7.png"
+    elif "s&p" in name: return "/static/image_10cf86.png"
+    elif "dow" in name or "ดาวโจนส์" in name: return "/static/dow jones logo.png"
+    elif "nikkei" in name or "นิเคอิ" in name: return "/static/image_0ff5ed.png"
+    elif "dax" in name or "เยอรมัน" in name: return "/static/image_0ff24b.png"
+    elif "nifty" in name or "อินเดีย" in name: return "/static/image_0feba1.jpg"
+    elif "kse" in name or "ปากีสถาน" in name: return "/static/image_0f892c.png"
+    elif "ลาว" in name: return "https://upload.wikimedia.org/wikipedia/commons/5/56/Flag_of_Laos.svg"
+    else: return "https://cdn-icons-png.flaticon.com/512/10383/10383210.png"
 
-# ================= 1. หน้าจอ LOGIN =================
+# ================= Helper ดึงข้อมูลดิบเลขอั้น =================
+def get_blocked_display_data(draw_date):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("SELECT raw_num, status, type FROM BlockedNumbers WHERE (draw_date = %s OR draw_date ILIKE %s) AND is_raw = TRUE", (draw_date, f"%{draw_date}%"))
+        rows = c.fetchall()
+        if not rows:
+            c.execute("SELECT raw_num, status, type FROM BlockedNumbers WHERE (draw_date = %s OR draw_date ILIKE %s)", (draw_date, f"%{draw_date}%"))
+            rows = c.fetchall()
+        conn.close()
+        l_c, l_3, l_2 = [], [], []
+        seen_c, seen_3, seen_2 = set(), set(), set()
+        for r_num, status_val, type_val in rows:
+            if not r_num: continue
+            num_str = str(r_num).strip()
+            if status_val == "ปิดรับ":
+                if num_str not in seen_c: seen_c.add(num_str); l_c.append(num_str)
+            else:
+                if len(num_str) == 3 or type_val == "3ตัว":
+                    if num_str not in seen_3: seen_3.add(num_str); l_3.append(num_str)
+                elif len(num_str) == 2 or type_val == "2ตัว":
+                    if num_str not in seen_2: seen_2.add(num_str); l_2.append(num_str)
+        return ", ".join(l_c), ", ".join(l_3), ", ".join(l_2)
+    except:
+        return "", "", ""
+
+# ================= UNIFIED LAYOUT CSS & NAVBAR =================
+UNIFIED_LAYOUT = """
+<style>
+    * { box-sizing: border-box; }
+    body { background-color: #f7e6d0; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 0; overflow-x: hidden; }
+    .top-navbar { background-color: #000; border-bottom: 2px solid #d4af37; padding: 8px 15px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; width: 100%; }
+    .logo-text { font-family: 'Georgia', serif; font-style: italic; font-weight: bold; font-size: 1.3rem; color: #f3e5ab; margin-right: 10px; white-space: nowrap; }
+    .top-nav-menu { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .top-nav-menu a { color: #fff; text-decoration: none; font-size: 0.8rem; padding: 4px 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid #333; white-space: nowrap; }
+    .top-nav-menu a:hover, .top-nav-menu a.active { background: #d4af37; color: #000; font-weight: bold; }
+    
+    .main-container { display: flex; width: 100vw; height: calc(100vh - 48px); overflow: hidden; }
+    .sidebar-left { width: 260px; background-color: #000; color: white; border-right: 2px solid #d4af37; padding: 12px; flex-shrink: 0; overflow-y: auto; }
+    .content-center { flex-grow: 1; padding: 15px; overflow-y: auto; background-color: #f7e6d0; height: 100%; }
+    .sidebar-right { width: 280px; background-color: rgba(255,255,255,0.7); border-left: 2px solid #d4af37; padding: 12px; flex-shrink: 0; overflow-y: auto; }
+    
+    .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .card { width: 100%; max-width: 100%; word-break: break-word; }
+    .sticky-timer { position: sticky; top: 10px; z-index: 1000; float: right; background: #dc3545; color: white; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 2px solid #fff; }
+
+    @media (max-width: 992px) {
+        .main-container { flex-direction: column; height: auto; overflow: auto; }
+        .sidebar-left, .sidebar-right { width: 100%; max-height: 250px; }
+        .content-center { height: auto; }
+    }
+</style>
+<div class="top-navbar">
+    <div class="d-flex align-items-center flex-wrap">
+        <span class="logo-text">LuckyNumber ERP</span>
+        <div class="top-nav-menu">
+            <a href="/select-market?user={{ username }}">บันทึกโพย</a>
+            <a href="/agent-reports?user={{ username }}">รายงานผล</a>
+            
+            {% if role == 'Admin' or role == 'Master Agent' %}
+            <a href="/admin-campaigns?user={{ username }}">จัดการงวดหวย</a>
+            <a href="/admin-blocked?user={{ username }}">เลขอั้น</a>
+            <a href="/admin-users?user={{ username }}">จัดการผู้ใช้</a>
+            <a href="/manage-customers?user={{ username }}">จัดการลูกค้า</a>
+            <a href="/customer-rates-page?user={{ username }}">เรตลูกค้าแยกหวย</a>
+            <a href="/system-reset?user={{ username }}" class="text-danger">รีเซ็ตระบบ</a>
+            {% endif %}
+            
+            <a href="/change-password?user={{ username }}" class="text-warning">เปลี่ยนรหัสผ่าน</a>
+        </div>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+        <span class="text-warning small">สถานะ: <b>{{ role }} ({{ username }})</b></span>
+        <a href="/login" class="btn btn-danger btn-sm fw-bold px-2 py-1" style="font-size: 0.75rem;">ออกจากระบบ</a>
+    </div>
+</div>
+"""
+
+# ================= 1. LOGIN =================
 LOGIN_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
 <head>
-    <meta charset="UTF-8">
-    <title>LuckyNumber - Login</title>
+    <meta charset="UTF-8"><title>LuckyNumber - Login</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background-color: #f7e6d0; height: 100vh; display: flex; align-items: center; justify-content: center; }
@@ -115,6 +219,10 @@ LOGIN_TEMPLATE = """
 </html>
 """
 
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
 @app.get("/login", response_class=HTMLResponse)
 def login_page(error: str = None):
     return Template(LOGIN_TEMPLATE).render(error=error)
@@ -129,116 +237,14 @@ def login_action(username: str = Form(...), password: str = Form(...)):
         conn.close()
         
         if user:
-            role = user[1].strip()
-            # ถ้าเป็น Admin ให้ไป Dashboard / แต่ถ้าเป็น Agent, Member ให้ตรงไปที่หน้าเลือกงวดหวยเลย
-            if role in ['Admin', 'Master Agent']:
-                return RedirectResponse(url=f"/dashboard?user={username}", status_code=status.HTTP_303_SEE_OTHER)
-            else:
-                return RedirectResponse(url=f"/select-market?user={username}", status_code=status.HTTP_303_SEE_OTHER)
+            # Login ผ่านแล้ว ให้เด้งตรงไปยังหน้าเลือกงวดหวยเสมอ
+            return RedirectResponse(url=f"/select-market?user={username}", status_code=status.HTTP_303_SEE_OTHER)
         else:
             return RedirectResponse(url="/login?error=Username%20or%20Password%20ไม่ถูกต้อง", status_code=status.HTTP_303_SEE_OTHER)
     except:
         return RedirectResponse(url="/login?error=DB%20Error", status_code=status.HTTP_303_SEE_OTHER)
 
-# ================= Layout หลัก (รวมเมนูด้านบนครอบคลุมทุกฟังก์ชัน และซ่อนเมนูสำหรับผู้ใช้อื่น) =================
-UNIFIED_LAYOUT = """
-<style>
-    * { box-sizing: border-box; }
-    body { background-color: #f7e6d0; font-family: 'Segoe UI', sans-serif; margin: 0; padding: 0; overflow-x: hidden; }
-    .top-navbar { background-color: #000; border-bottom: 2px solid #d4af37; padding: 8px 15px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; width: 100%; }
-    .logo-text { font-family: 'Georgia', serif; font-style: italic; font-weight: bold; font-size: 1.3rem; color: #f3e5ab; margin-right: 10px; white-space: nowrap; }
-    .top-nav-menu { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-    .top-nav-menu a { color: #fff; text-decoration: none; font-size: 0.8rem; padding: 4px 8px; border-radius: 4px; background: #1a1a1a; border: 1px solid #333; white-space: nowrap; }
-    .top-nav-menu a:hover, .top-nav-menu a.active { background: #d4af37; color: #000; font-weight: bold; }
-    
-    .main-container { display: flex; width: 100vw; height: calc(100vh - 48px); overflow: hidden; }
-    .sidebar-left { width: 240px; background-color: #000; color: white; border-right: 2px solid #d4af37; padding: 12px; flex-shrink: 0; overflow-y: auto; }
-    .content-center { flex-grow: 1; padding: 15px; overflow-y: auto; background-color: #f7e6d0; height: 100%; }
-    .sidebar-right { width: 280px; background-color: rgba(255,255,255,0.7); border-left: 2px solid #d4af37; padding: 12px; flex-shrink: 0; overflow-y: auto; }
-    
-    .table-responsive { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-    .card { width: 100%; max-width: 100%; word-break: break-word; }
-    .sticky-timer { position: sticky; top: 10px; z-index: 1000; float: right; background: #dc3545; color: white; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 2px solid #fff; }
-
-    @media (max-width: 992px) {
-        .main-container { flex-direction: column; height: auto; overflow: auto; }
-        .sidebar-left, .sidebar-right { width: 100%; max-height: 200px; }
-        .content-center { height: auto; }
-    }
-</style>
-<div class="top-navbar">
-    <div class="d-flex align-items-center flex-wrap">
-        <span class="logo-text">LuckyNumber ERP</span>
-        <div class="top-nav-menu">
-            <a href="/select-market?user={{ username }}">บันทึกโพย</a>
-            <a href="/agent-reports?user={{ username }}">รายงานยอดขาย</a>
-            
-            <!-- ซ่อนเมนูแดชบอร์ดและตั้งค่าต่างๆ หากไม่ใช่ Admin -->
-            {% if role == 'Admin' or role == 'Master Agent' %}
-            <a href="/dashboard?user={{ username }}">แดชบอร์ด</a>
-            <a href="/admin-campaigns?user={{ username }}">จัดการงวดหวย</a>
-            <a href="/admin-blocked?user={{ username }}">เลขอั้น</a>
-            <a href="/admin-users?user={{ username }}">จัดการผู้ใช้</a>
-            <a href="/customer-rates-page?user={{ username }}">เรตลูกค้า</a>
-            <a href="/agent-settlement?user={{ username }}">บัญชีรับ-จ่าย</a>
-            <a href="/system-reset?user={{ username }}" class="text-danger">รีเซ็ตระบบ</a>
-            {% endif %}
-            
-            <a href="/change-password?user={{ username }}" class="text-warning">เปลี่ยนรหัสผ่าน</a>
-        </div>
-    </div>
-    <div class="d-flex align-items-center gap-2">
-        <span class="text-warning small">สถานะ: <b>{{ role }} ({{ username }})</b></span>
-        <a href="/login" class="btn btn-danger btn-sm fw-bold px-2 py-1" style="font-size: 0.75rem;">ออกจากระบบ</a>
-    </div>
-</div>
-"""
-
-# ================= 2. แดชบอร์ดหลัก =================
-@app.get("/dashboard", response_class=HTMLResponse)
-def dashboard_page(user: str):
-    conn = connect_db()
-    c = conn.cursor()
-    c.execute("SELECT role FROM Users WHERE username=%s", (user,))
-    res = c.fetchone()
-    role = res[0].strip() if res else "Member"
-    conn.close()
-    
-    # ถ้าบังเอิญพิมพ์ URL เข้ามา แล้วไม่ใช่ Admin ให้เด้งไปหน้าเลือกงวดหวยทันที
-    if role not in ['Admin', 'Master Agent']:
-        return RedirectResponse(url=f"/select-market?user={user}", status_code=status.HTTP_303_SEE_OTHER)
-    
-    html = """
-    <!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><title>Dashboard</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
-    <body class="bg-light">
-    """ + UNIFIED_LAYOUT.replace("{{ username }}", user).replace("{{ role }}", role) + """
-    <div class="container my-5 text-center">
-        <h1 class="text-primary fw-bold mb-3">ยินดีต้อนรับสู่ระบบจัดการลอตเตอรี่ (Admin Portal)</h1>
-        <p class="text-muted">ระบบสำหรับผู้ดูแลจัดการภาพรวม</p>
-        <a href="/select-market?user=""" + user + """" class="btn btn-warning btn-lg fw-bold px-5 mt-3">🎟️ ไปยังหน้าตลาดหวย</a>
-    </div></body></html>
-    """
-    return html
-
-# ================= 3. หน้าเลือกตลาด / งวดหวย (แยกหมวดหมู่ + ใส่โลโก้ + ปรับขนาดอัตโนมัติ) =================
-
-def get_lotto_logo(lotto_name):
-    """ ฟังก์ชันช่วยเลือกรูปโลโก้ตามชื่อหวย """
-    name = lotto_name.lower()
-    if "ลาวพัฒนา" in name: return "/static/ลาวพัฒนาโลโก้.png"
-    elif "รัฐบาล" in name: return "/static/สำนักงานสลากกินแบ่งรัฐบาล.png"
-    elif "ฮานอย" in name: return "/static/สัญลักษณ์หวยฮานอย.png"
-    elif "nasdaq" in name: return "/static/image_4326b7.png"
-    elif "s&p" in name: return "/static/image_10cf86.png"
-    elif "dow jones" in name or "ดาวโจนส์" in name: return "/static/dow jones logo.png"
-    elif "nikkei" in name or "นิเคอิ" in name: return "/static/image_0ff5ed.png"
-    elif "dax" in name or "เยอรมัน" in name: return "/static/image_0ff24b.png"
-    elif "nifty" in name or "อินเดีย" in name: return "/static/image_0feba1.jpg"
-    elif "kse" in name or "ปากีสถาน" in name: return "/static/image_0f892c.png"
-    elif "ลาว" in name: return "https://upload.wikimedia.org/wikipedia/commons/5/56/Flag_of_Laos.svg" # ลาวอื่นๆ ใช้ธงชาติ
-    else: return "https://cdn-icons-png.flaticon.com/512/10383/10383210.png" # รูปสัญลักษณ์สุ่มหวยพื้นฐาน
-
+# ================= 2. หน้าเลือกงวดหวย (/select-market) =================
 SELECT_MARKET_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -260,7 +266,7 @@ SELECT_MARKET_TEMPLATE = """
 <body>
     <div class="container-fluid my-4 px-4">
         <h3 class="fw-bold mb-1 text-primary">📌 ตลาดหวยที่เปิดรับแทง</h3>
-        <p class="text-muted small">จัดเรียงและปรับขนาดหน้าจออัตโนมัติ</p>
+        <p class="text-muted small">เลือกงวดหวยที่ต้องการเข้าซื้อหวยหรือคีย์โพย</p>
 
         {% for cat_name, markets in categories.items() %}
         <h5 class="category-header">🎯 หมวดหมู่: {{ cat_name }}</h5>
@@ -295,69 +301,28 @@ def select_market(user: str):
         c = conn.cursor()
         c.execute("SELECT role FROM Users WHERE username=%s", (user,))
         res = c.fetchone()
-        role = res[0] if res else "Member"
+        role = res[0].strip() if res else "Member"
         c.execute("SELECT id, lotto_name, draw_date, status, close_time FROM LotteryCampaigns WHERE status='Active' ORDER BY id DESC")
         raw_markets = c.fetchall()
         conn.close()
 
-        # จัดหมวดหมู่หวย
         categories = {"รัฐบาลไทย": [], "ฮานอย": [], "ลาว": [], "หุ้นต่างประเทศ": [], "อื่นๆ": []}
         for m in raw_markets:
             m_data = {"id": m[0], "name": m[1], "draw": m[2], "status": m[3], "close": m[4], "logo": get_lotto_logo(m[1])}
-            
             if "รัฐบาล" in m[1]: categories["รัฐบาลไทย"].append(m_data)
             elif "ฮานอย" in m[1]: categories["ฮานอย"].append(m_data)
             elif "ลาว" in m[1]: categories["ลาว"].append(m_data)
-            elif any(k in m[1].lower() for k in ["หุ้น", "nasdaq", "dow", "s&p", "nikkei", "dax", "nifty", "kse"]): 
-                categories["หุ้นต่างประเทศ"].append(m_data)
-            else: 
-                categories["อื่นๆ"].append(m_data)
+            elif any(k in m[1].lower() for k in ["หุ้น", "nasdaq", "dow", "s&p", "nikkei", "dax", "nifty", "kse"]): categories["หุ้นต่างประเทศ"].append(m_data)
+            else: categories["อื่นๆ"].append(m_data)
 
-        # ลบหมวดหมู่ที่ไม่มีหวยออกจากการแสดงผล
         categories = {k: v for k, v in categories.items() if len(v) > 0}
-
     except Exception as e:
         print("Market Load Error:", e)
         role, categories = "Member", {}
         
     return Template(SELECT_MARKET_TEMPLATE).render(username=user, role=role, categories=categories)
 
-
-# ================= Helper ดึงเลขอั้น =================
-def get_blocked_display_data(draw_date):
-    try:
-        conn = connect_db()
-        c = conn.cursor()
-        c.execute("SELECT raw_num, status, type FROM BlockedNumbers WHERE (draw_date = %s OR draw_date ILIKE %s) AND is_raw = TRUE", (draw_date, f"%{draw_date}%"))
-        rows = c.fetchall()
-        if not rows:
-            c.execute("SELECT raw_num, status, type FROM BlockedNumbers WHERE (draw_date = %s OR draw_date ILIKE %s)", (draw_date, f"%{draw_date}%"))
-            rows = c.fetchall()
-        conn.close()
-        l_c, l_3, l_2 = [], [], []
-        seen_c, seen_3, seen_2 = set(), set(), set()
-        for r_num, status_val, type_val in rows:
-            if not r_num: continue
-            num_str = str(r_num).strip()
-            if status_val == "ปิดรับ":
-                if num_str not in seen_c:
-                    seen_c.add(num_str)
-                    l_c.append(num_str)
-            else:
-                if len(num_str) == 3 or type_val == "3ตัว":
-                    if num_str not in seen_3:
-                        seen_3.add(num_str)
-                        l_3.append(num_str)
-                elif len(num_str) == 2 or type_val == "2ตัว":
-                    if num_str not in seen_2:
-                        seen_2.add(num_str)
-                        l_2.append(num_str)
-        return ", ".join(l_c), ", ".join(l_3), ", ".join(l_2)
-    except:
-        return "", "", ""
-
-
-# ================= 4. หน้าจอหลัก POS (บันทึกโพย + Sticky Timer + เรตเปลี่ยนตามลูกค้า) =================
+# ================= 3. หน้าบันทึกโพย POS (/portal) =================
 PORTAL_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -367,23 +332,19 @@ PORTAL_TEMPLATE = """
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     """ + UNIFIED_LAYOUT + """
     <style>
-        .market-banner { background-color: #dc3545; color: white; padding: 8px 15px; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; font-weight: bold; margin-bottom: 15px; }
+        .market-banner { background-color: #dc3545; color: white; padding: 10px 15px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-weight: bold; margin-bottom: 15px; }
         .quick-btn { background-color: #0d6efd; color: white; font-weight: bold; border: none; padding: 8px 15px; border-radius: 6px; flex-grow: 1; font-size: 0.9rem; }
-        .rate-table th, .rate-table td { font-size: 0.75rem; padding: 3px !important; color: white; background-color: #1a1a1a !important; border-color: #444 !important; }
-        .main-container { display: flex; height: calc(100vh - 50px); }
-        .sidebar-left { width: 280px; background-color: #000; color: white; border-right: 2px solid #d4af37; padding: 15px; flex-shrink: 0; overflow-y: auto; }
-        .content-center { flex-grow: 1; padding: 15px; overflow-y: auto; }
-        .sidebar-right { width: 320px; background-color: rgba(255,255,255,0.6); border-left: 2px solid #d4af37; padding: 15px; flex-shrink: 0; overflow-y: auto; }
+        .rate-table th, .rate-table td { font-size: 0.78rem; padding: 4px !important; color: white; background-color: #1a1a1a !important; border-color: #444 !important; }
+        .menu-title { color: #fff; font-weight: bold; font-size: 0.88rem; margin-top: 15px; margin-bottom: 6px; border-bottom: 1px solid #444; padding-bottom: 3px; }
+        .menu-item { display: block; color: #ccc; text-decoration: none; padding: 5px 8px; font-size: 0.83rem; margin-bottom: 3px; border-radius: 4px; }
+        .menu-item:hover { color: #d4af37; background-color: #222; }
     </style>
     <script>
         function startCountdown(closeTimeString) {
             let el = document.getElementById('sticky-timer');
             if(!closeTimeString) { el.innerText = "⏰ ไม่ระบุเวลาปิดรับ"; return; }
             let countDownDate = new Date(closeTimeString).getTime();
-            if(isNaN(countDownDate)) {
-                // ถ้า parse วันที่ตรงๆ ไม่ได้ ให้จำลองเวลาเหลือ 2 ชม.
-                countDownDate = new Date().getTime() + (2 * 60 * 60 * 1000);
-            }
+            if(isNaN(countDownDate)) { countDownDate = new Date().getTime() + (2 * 60 * 60 * 1000); }
             let x = setInterval(function() {
                 let now = new Date().getTime();
                 let distance = countDownDate - now;
@@ -395,7 +356,7 @@ PORTAL_TEMPLATE = """
                     let hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
                     let minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
                     let seconds = Math.floor((distance % (1000 * 60)) / 1000);
-                    el.innerText = `⏳ ปิดรับใน: ${hours}ชม. ${minutes}น. ${seconds}ว.`;
+                    el.innerText = `⏳ เหลือเวลา: ${hours}ช. ${minutes}น. ${seconds}ว.`;
                 }
             }, 1000);
         }
@@ -403,9 +364,9 @@ PORTAL_TEMPLATE = """
 </head>
 <body onload="startCountdown('{{ close_time }}')">
     <div class="main-container" style="width: 100%;">
-        <!-- Sidebar ซ้าย: เลือกชื่อลูกค้า/ผู้ใช้ และแสดงเรตตามที่เลือก -->
+        <!-- Sidebar ซ้าย: เลือกรายชื่อลูกค้า/สายงาน + อัตราจ่าย + เมนูด่วน 5 รายการ -->
         <div class="sidebar-left">
-            <div class="user-box p-2 bg-dark border border-secondary mb-3 rounded">
+            <div class="p-2 bg-dark border border-secondary mb-3 rounded">
                 <div class="fw-bold text-warning small mb-1">ข้อมูลผู้ใช้งาน</div>
                 <div class="small text-white">ล็อกอิน: <b>{{ username }}</b></div>
             </div>
@@ -415,7 +376,7 @@ PORTAL_TEMPLATE = """
                 <input type="hidden" name="market" value="{{ market }}">
                 <input type="hidden" name="draw" value="{{ draw_date }}">
                 <div class="mb-3">
-                    <label class="form-label small fw-bold text-warning">เลือกชื่อลูกค้า / ผู้ใช้ใต้สายงาน:</label>
+                    <label class="form-label small fw-bold text-warning">เลือกลูกค้า / สายงาน:</label>
                     <select name="customer_id" class="form-select form-select-sm" onchange="document.getElementById('customerForm').submit()">
                         {% for cust in customers %}
                         <option value="{{ cust[0] }}" {% if cust[0]|string == customer_id|string %}selected{% endif %}>{{ cust[1] }}</option>
@@ -425,7 +386,8 @@ PORTAL_TEMPLATE = """
             </form>
 
             <div class="mb-3">
-                <div class="small fw-bold text-info mb-1">อัตราจ่าย: {{ market }} ({{ current_customer_name }})</div>
+                <div class="small fw-bold text-info mb-1">อัตราจ่าย: {{ market }}</div>
+                <div class="extra-small text-warning mb-1" style="font-size:0.75rem;">({{ current_customer_name }})</div>
                 <table class="table table-bordered rate-table text-center">
                     <thead><tr><th>ประเภท</th><th>รางวัล</th><th>ส่วนลด</th></tr></thead>
                     <tbody>
@@ -437,23 +399,21 @@ PORTAL_TEMPLATE = """
                 </table>
             </div>
 
-            <div class="menu-title mt-4">เมนูด่วน</div>
-            <a href="/select-market?user={{ username }}" class="menu-item">▶ เปลี่ยนตลาด/งวด</a>
-            <a href="/agent-reports?user={{ username }}" class="menu-item text-success">📊 รายงานยอดขาย</a>
-            
-            <!-- ซ่อนเมนูจัดการผู้ใช้หากไม่ใช่ Admin -->
-            {% if role == 'Admin' or role == 'Master Agent' %}
-            <a href="/admin-users?user={{ username }}" class="menu-item text-warning">👥 จัดการสมาชิก/ผู้ใช้</a>
-            <a href="/customer-rates-page?user={{ username }}" class="menu-item text-info">⚙️ ตั้งค่าเรตลูกค้า</a>
-            {% endif %}
+            <div class="menu-title">เมนูด่วน</div>
+            <a href="/admin-users?user={{ username }}" class="menu-item text-warning">1. 👥 จัดการผู้ใช้ (สร้างสายงาน)</a>
+            <a href="/manage-customers?user={{ username }}" class="menu-item text-info">2. 👤 จัดการลูกค้า</a>
+            <a href="/customer-rates-page?user={{ username }}" class="menu-item text-warning">3. ⚙️ ตั้งค่าเรตลูกค้าแยกตามหวย</a>
+            <a href="/select-market?user={{ username }}" class="menu-item text-primary">4. 🏠 กลับหน้าหลัก (เลือกหวย)</a>
+            <a href="/agent-reports?user={{ username }}" class="menu-item text-success">5. 📊 รายงานผล & สรุปยอด</a>
+        </div>
 
-        <!-- Content ตรงกลาง: คีย์โพย -->
+        <!-- Content ตรงกลาง: คีย์โพย (ตำแหน่งถูกต้อง สมบูรณ์) -->
         <div class="content-center">
-            <!-- Sticky Timer ลอยตัวมุมขวาบนในตำแหน่งนี้ตลอดเวลา -->
             <div id="sticky-timer" class="sticky-timer">⏳ กำลังคำนวณเวลา...</div>
 
             <div class="market-banner">
-                <div>🎟️ {{ market }} งวดวันที่ {{ draw_date }} | เลือก: <span class="text-warning">{{ current_customer_name }}</span></div>
+                <div>🎟️ {{ market }} (งวด {{ draw_date }})</div>
+                <div class="text-warning small">ผู้ซื้อ: {{ current_customer_name }}</div>
             </div>
 
             <div class="quick-btn-group d-flex gap-2 mb-3">
@@ -469,41 +429,52 @@ PORTAL_TEMPLATE = """
                 <input type="hidden" name="draw" value="{{ draw_date }}">
                 <input type="hidden" name="customer_id" value="{{ customer_id }}">
                 <div class="row g-2 align-items-center">
-                    <div class="col-md-4"><label class="small fw-bold">ตัวเลข</label><input type="text" name="num_input" class="form-control" placeholder="พิมพ์เลข..." required></div>
+                    <div class="col-md-4"><label class="small fw-bold">ตัวเลข</label><input type="text" name="num_input" class="form-control" placeholder="พิมพ์เลข..." required autofocus></div>
                     <div class="col-md-4"><label class="small fw-bold">บน / 3ตัวตรง</label><input type="number" step="any" name="top_amt" class="form-control" placeholder="จำนวนเงิน"></div>
                     <div class="col-md-4"><label class="small fw-bold">ล่าง / 3ตัวโต๊ด</label><input type="number" step="any" name="bot_amt" class="form-control" placeholder="จำนวนเงิน"></div>
                 </div>
-                <button type="submit" class="btn btn-primary btn-sm fw-bold mt-2 px-4">เพิ่มรายการ</button>
+                <button type="submit" class="btn btn-primary btn-sm fw-bold mt-3 px-4">➕ เพิ่มรายการคีย์โพย</button>
             </form>
 
             <div class="card shadow-sm p-3 bg-white">
-                <h5 class="fw-bold mb-2 text-center">รายการร่าง (รอออกบิล)</h5>
-                <table class="table table-sm table-bordered text-center" style="font-size:0.85rem;">
-                    <thead class="table-dark"><tr><th>เลข</th><th>ประเภท</th><th>เดิมพัน</th><th>เรตจ่าย</th><th>ส่วนลด</th></tr></thead>
-                    <tbody>
-                        {% for d in drafts %}
-                        <tr><td><b>{{ d[1] }}</b></td><td>{{ d[4] }}</td><td>{{ d[2] }}</td><td>{{ d[5] }}</td><td>{{ d[6] }}</td></tr>
-                        {% else %}
-                        <tr><td colspan="5" class="text-muted">ยังไม่มีรายการ</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+                <h5 class="fw-bold mb-2 text-center text-primary">📋 ตารางพรีวิวโพยร่าง (รอออกบิล)</h5>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered text-center align-middle" style="font-size:0.85rem;">
+                        <thead class="table-dark">
+                            <tr><th>ลำดับ</th><th>ตัวเลข</th><th>ประเภท</th><th>เดิมพัน</th><th>อัตราจ่าย</th><th>ส่วนลด</th><th>ยอดสุทธิ</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for d in drafts %}
+                            <tr>
+                                <td>{{ loop.index }}</td>
+                                <td><b>{{ d[1] }}</b></td>
+                                <td>{{ d[4] }}</td>
+                                <td>{{ d[2] }}</td>
+                                <td>{{ d[5] }}</td>
+                                <td>{{ d[6] }}%</td>
+                                <td><b>{{ d[7] }}</b></td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="7" class="text-muted py-3">ยังไม่มีรายการโพยร่าง</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
 
-
-        <!-- Sidebar ขวา: เลขอั้น 3 กรอบแยกส่วน -->
+        <!-- Sidebar ขวา: เลขอั้นข้อมูลดิบ 3 กรอบ -->
         <div class="sidebar-right">
             <h6 class="text-center fw-bold text-danger mb-3">🚫 รายการเลขอั้นประจำงวด</h6>
             
             <label class="fw-bold text-dark mb-1 small">1. เลขอั้นปิดรับ:</label>
-            <textarea class="form-control form-control-sm mb-2 bg-light text-danger fw-bold" rows="2" readonly>{{ block_closed }}</textarea>
+            <textarea class="form-control form-control-sm mb-2 bg-light text-danger fw-bold" rows="3" readonly>{{ block_closed }}</textarea>
             
-            <label class="fw-bold text-dark mb-1 small">2. เลขอั้น 3 ตัวตรง-โต๊ด ทุกกลับ (จ่ายครึ่ง):</label>
-            <textarea class="form-control form-control-sm mb-2 bg-light text-dark" rows="2" readonly>{{ block_3d }}</textarea>
+            <label class="fw-bold text-dark mb-1 small">2. เลขอั้น 3 ตัวจ่ายครึ่ง:</label>
+            <textarea class="form-control form-control-sm mb-2 bg-light text-dark" rows="3" readonly>{{ block_3d }}</textarea>
             
-            <label class="fw-bold text-dark mb-1 small">3. เลขอั้น 2 ตัว บน-ล่าง พร้อมตัวกลับ (จ่ายครึ่ง):</label>
-            <textarea class="form-control form-control-sm bg-light text-dark" rows="2" readonly>{{ block_2d }}</textarea>
+            <label class="fw-bold text-dark mb-1 small">3. เลขอั้น 2 ตัวจ่ายครึ่ง:</label>
+            <textarea class="form-control form-control-sm bg-light text-dark" rows="3" readonly>{{ block_2d }}</textarea>
         </div>
     </div>
 </body>
@@ -516,33 +487,23 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None):
         conn = connect_db()
         c = conn.cursor()
         
-        # ตรวจสอบสิทธิ์ว่าเป็นใคร
         c.execute("SELECT id, role FROM Users WHERE username=%s", (user,))
         role_res = c.fetchone()
         role = role_res[1].strip() if role_res else "Member"
         logged_in_uid = role_res[0] if role_res else 0
 
         customers = []
-        
-        # กรองรายชื่อ: ถ้าเป็น Admin ให้เห็นทุกคน / ถ้าเป็น Agent ให้เห็นแค่ตัวเองและลูกข่าย
         if role == 'Admin' or role == 'Master Agent':
             c.execute("SELECT id, name FROM Customers ORDER BY id DESC")
-            for row in c.fetchall():
-                customers.append((str(row[0]), row[1]))
+            for row in c.fetchall(): customers.append((str(row[0]), row[1]))
             c.execute("SELECT id, username FROM Users ORDER BY id DESC")
-            for row in c.fetchall():
-                customers.append((f"user_{row[0]}", f"user: {row[1]}"))
+            for row in c.fetchall(): customers.append((f"user_{row[0]}", f"user: {row[1]}"))
         else:
-            # 1. ใส่ชื่อตัวเองลงไปให้เลือกแทงได้
             customers.append((f"user_{logged_in_uid}", f"user: {user} (บัญชีตัวเอง)"))
-            # 2. ลูกค้ารายย่อยเฉพาะใต้สายงาน
             c.execute("SELECT id, name FROM Customers WHERE owner_username=%s ORDER BY id DESC", (user,))
-            for row in c.fetchall():
-                customers.append((str(row[0]), row[1]))
-            # 3. ผู้ใช้ระบบเฉพาะใต้สายงาน
+            for row in c.fetchall(): customers.append((str(row[0]), row[1]))
             c.execute("SELECT id, username FROM Users WHERE parent_username=%s ORDER BY id DESC", (user,))
-            for row in c.fetchall():
-                customers.append((f"user_{row[0]}", f"user: {row[1]}"))
+            for row in c.fetchall(): customers.append((f"user_{row[0]}", f"user: {row[1]}"))
 
         if not customer_id and customers:
             customer_id = customers[0][0]
@@ -553,42 +514,31 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None):
                 current_customer_name = cust[1]
                 break
 
-        # ดึงเรตอัตราจ่ายและส่วนลด (แก้ไขระบบป้องกันค่า Error ให้ดึงตรงเป๊ะ 100%)
+        # ตรวจสอบเรตเฉพาะจากตาราง CustomerLottoRates ก่อน หากไม่มีให้ใช้เรตหลัก
         user_rates = {"pay_3d": 500.0, "pay_3tod": 100.0, "pay_2d": 70.0, "pay_run_top": 3.2, "pay_run_bot": 4.2, "disc_total": 0.0, "disc_3d": 0.0, "disc_2d": 0.0, "disc_run": 0.0}
         
-        if str(customer_id).startswith("user_"):
-            u_id = str(customer_id).replace("user_", "")
-            c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Users WHERE id=%s", (u_id,))
-            ur = c.fetchone()
-            if ur:
-                user_rates.update({
-                    "pay_3d": float(ur[0]) if ur[0] is not None else 500.0,
-                    "pay_3tod": float(ur[1]) if ur[1] is not None else 100.0,
-                    "pay_2d": float(ur[2]) if ur[2] is not None else 70.0,
-                    "pay_run_top": float(ur[3]) if ur[3] is not None else 3.2,
-                    "pay_run_bot": float(ur[4]) if ur[4] is not None else 4.2,
-                    "disc_3d": float(ur[5]) if ur[5] is not None else 0.0,
-                    "disc_2d": float(ur[6]) if ur[6] is not None else 0.0,
-                    "disc_run": float(ur[7]) if ur[7] is not None else 0.0,
-                    "disc_total": float(ur[8]) if ur[8] is not None else 0.0
-                })
+        c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM CustomerLottoRates WHERE target_id=%s AND lotto_name=%s", (str(customer_id), market))
+        specific_rate = c.fetchone()
+        
+        if specific_rate:
+            user_rates.update({
+                "pay_3d": float(specific_rate[0] or 500), "pay_3tod": float(specific_rate[1] or 100), "pay_2d": float(specific_rate[2] or 70),
+                "pay_run_top": float(specific_rate[3] or 3.2), "pay_run_bot": float(specific_rate[4] or 4.2),
+                "disc_3d": float(specific_rate[5] or 0), "disc_2d": float(specific_rate[6] or 0), "disc_run": float(specific_rate[7] or 0), "disc_total": float(specific_rate[8] or 0)
+            })
         else:
-            c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Customers WHERE id=%s", (customer_id,))
-            cr = c.fetchone()
-            if cr:
-                user_rates.update({
-                    "pay_3d": float(cr[0]) if cr[0] is not None else 500.0,
-                    "pay_3tod": float(cr[1]) if cr[1] is not None else 100.0,
-                    "pay_2d": float(cr[2]) if cr[2] is not None else 70.0,
-                    "pay_run_top": float(cr[3]) if cr[3] is not None else 3.2,
-                    "pay_run_bot": float(cr[4]) if cr[4] is not None else 4.2,
-                    "disc_3d": float(cr[5]) if cr[5] is not None else 0.0,
-                    "disc_2d": float(cr[6]) if cr[6] is not None else 0.0,
-                    "disc_run": float(cr[7]) if cr[7] is not None else 0.0,
-                    "disc_total": float(cr[8]) if cr[8] is not None else 0.0
-                })
+            if str(customer_id).startswith("user_"):
+                u_id = str(customer_id).replace("user_", "")
+                c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Users WHERE id=%s", (u_id,))
+                ur = c.fetchone()
+                if ur:
+                    user_rates.update({"pay_3d": float(ur[0] or 500), "pay_3tod": float(ur[1] or 100), "pay_2d": float(ur[2] or 70), "pay_run_top": float(ur[3] or 3.2), "pay_run_bot": float(ur[4] or 4.2), "disc_3d": float(ur[5] or 0), "disc_2d": float(ur[6] or 0), "disc_run": float(ur[7] or 0), "disc_total": float(ur[8] or 0)})
+            else:
+                c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Customers WHERE id=%s", (customer_id,))
+                cr = c.fetchone()
+                if cr:
+                    user_rates.update({"pay_3d": float(cr[0] or 500), "pay_3tod": float(cr[1] or 100), "pay_2d": float(cr[2] or 70), "pay_run_top": float(cr[3] or 3.2), "pay_run_bot": float(cr[4] or 4.2), "disc_3d": float(cr[5] or 0), "disc_2d": float(cr[6] or 0), "disc_run": float(cr[7] or 0), "disc_total": float(cr[8] or 0)})
 
-        # ดึงเวลาปิดรับและโพยร่าง
         c.execute("SELECT close_time FROM LotteryCampaigns WHERE lotto_name=%s AND draw_date=%s", (market, draw))
         cr_res = c.fetchone()
         close_time = cr_res[0] if cr_res and cr_res[0] else ""
@@ -619,8 +569,7 @@ def portal_add_draft(user: str = Form(...), market: str = Form(...), draw: str =
     except: pass
     return RedirectResponse(url=f"/portal?user={user}&market={market}&draw={draw}&customer_id={customer_id}", status_code=303)
 
-
-# ================= 5. หน้าจอจัดการผู้ใช้ / สมาชิก =================
+# ================= 4. เมนูด่วนที่ 1: จัดการผู้ใช้ / สร้างสายงาน (/admin-users) =================
 ADMIN_USERS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -631,7 +580,7 @@ ADMIN_USERS_TEMPLATE = """
 <body>
     <div class="container my-4" style="max-width: 1100px;">
         <h3 class="fw-bold mb-4 text-primary">👥 จัดการบัญชีผู้ใช้ / สมาชิกใต้สายงาน</h3>
-        {% if msg %}<div class="alert alert-success">{{ msg }}</div>{% endif %}
+        {% if msg %}<div class="alert alert-success py-2">{{ msg }}</div>{% endif %}
         <div class="row">
             <div class="col-md-5">
                 <div class="card shadow p-4 bg-white">
@@ -641,15 +590,17 @@ ADMIN_USERS_TEMPLATE = """
                         
                         <div class="mb-2"><label class="small fw-bold">Username:</label><input type="text" name="new_username" class="form-control form-control-sm" required></div>
                         <div class="mb-2"><label class="small fw-bold">Password:</label><input type="password" name="new_password" class="form-control form-control-sm" required></div>
-                        <div class="mb-3"><label class="small fw-bold">สิทธิ์ (Role):</label>
+                        <div class="mb-3"><label class="small fw-bold">สิทธิ์ (Role) - สร้างได้เฉพาะสิทธิ์ต่ำกว่าตนเอง:</label>
                             <select name="role" class="form-select form-select-sm">
+                                {% if my_role == 'Admin' or my_role == 'Master Agent' %}
                                 <option value="Agent">Agent (ตัวแทน)</option>
+                                {% endif %}
                                 <option value="Member">Member (สมาชิก)</option>
                             </select>
                         </div>
                         
                         <hr class="my-2">
-                        <h6 class="fw-bold text-primary small">💰 อัตราจ่าย (Pay Rate)</h6>
+                        <h6 class="fw-bold text-primary small">💰 อัตราจ่าย (Pay Rate) ตั้งต้น</h6>
                         <div class="row g-2 mb-2">
                             <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">3ตรง:</label><input type="number" step="any" name="pay_3d" class="form-control form-control-sm" value="500"></div>
                             <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">3โต๊ด:</label><input type="number" step="any" name="pay_3tod" class="form-control form-control-sm" value="100"></div>
@@ -659,7 +610,7 @@ ADMIN_USERS_TEMPLATE = """
                         </div>
 
                         <hr class="my-2">
-                        <h6 class="fw-bold text-success small">📉 ส่วนลด (%)</h6>
+                        <h6 class="fw-bold text-success small">📉 ส่วนลด (%) ตั้งต้น</h6>
                         <div class="row g-2 mb-3">
                             <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 3ตัว (%):</label><input type="number" step="any" name="disc_3d" class="form-control form-control-sm" value="0"></div>
                             <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 2ตัว (%):</label><input type="number" step="any" name="disc_2d" class="form-control form-control-sm" value="0"></div>
@@ -667,7 +618,7 @@ ADMIN_USERS_TEMPLATE = """
                             <div class="col-6"><label class="extra-small text-success fw-bold" style="font-size:0.75rem;">ส่วนลดรวม (%):</label><input type="number" step="any" name="disc_total" class="form-control form-control-sm" value="0"></div>
                         </div>
 
-                        <button type="submit" class="btn btn-success w-100 fw-bold">💾 บันทึกสร้างบัญชีผู้ใช้</button>
+                        <button type="submit" class="btn btn-success w-100 fw-bold">💾 บันทึกสร้างสมาชิก</button>
                     </form>
                 </div>
             </div>
@@ -682,10 +633,10 @@ ADMIN_USERS_TEMPLATE = """
                                 <td>{{ u[0] }}</td>
                                 <td><b>{{ u[1] }}</b></td>
                                 <td><span class="badge bg-secondary">{{ u[3] }}</span></td>
-                                <td><a href="/edit-user?id={{ u[0] }}&user={{ username }}" class="btn btn-sm btn-warning">แก้ไข</a></td>
+                                <td><a href="/edit-user?id={{ u[0] }}&user={{ username }}" class="btn btn-sm btn-warning">แก้ไขเรต</a></td>
                             </tr>
                             {% else %}
-                            <tr><td colspan="4" class="text-muted">ยังไม่มีผู้ใช้ใต้สายงาน</td></tr>
+                            <tr><td colspan="4" class="text-muted">ยังไม่มีสมาชิกใต้สายงาน</td></tr>
                             {% endfor %}
                         </tbody>
                     </table>
@@ -703,18 +654,17 @@ def admin_users_page(user: str, msg: str = None):
         conn = connect_db()
         c = conn.cursor()
         c.execute("SELECT role FROM Users WHERE username=%s", (user,))
-        role = c.fetchone()[0]
+        role_res = c.fetchone()
+        role = role_res[0].strip() if role_res else "Member"
         
-        # กรองข้อมูลให้เห็นเฉพาะสายงาน
-        if role == 'Admin' or role == 'Master Agent':
+        if role == 'Admin':
             c.execute("SELECT id, username, password, role FROM Users ORDER BY id DESC")
         else:
             c.execute("SELECT id, username, password, role FROM Users WHERE parent_username=%s ORDER BY id DESC", (user,))
-        
         users = c.fetchall()
         conn.close()
-    except: role, users = "Agent", []
-    return Template(ADMIN_USERS_TEMPLATE).render(username=user, role=role, users=users, msg=msg)
+    except: role, users = "Member", []
+    return Template(ADMIN_USERS_TEMPLATE).render(username=user, role=role, my_role=role, users=users, msg=msg)
 
 @app.post("/admin-create-user")
 def admin_create_user(
@@ -735,88 +685,156 @@ def admin_create_user(
         """, (new_username, new_password, role, admin_user, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total))
         conn.commit()
         conn.close()
-        msg = f"สร้างผู้ใช้ '{new_username}' ภายใต้สายงานสำเร็จ!"
+        msg = f"สร้างบัญชี '{new_username}' ภายใต้สายงานสำเร็จ!"
     except Exception as e:
         msg = f"Error: {e}"
     return RedirectResponse(url=f"/admin-users?user={admin_user}&msg={msg}", status_code=303)
 
-# ================= 6. หน้าจอแก้ไขข้อมูลผู้ใช้ (Edit User) =================
-EDIT_USER_TEMPLATE = """
+# ================= 5. เมนูด่วนที่ 2: จัดการลูกค้า (/manage-customers) =================
+MANAGE_CUSTOMERS_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
-<head><meta charset="UTF-8"><title>แก้ไขข้อมูลผู้ใช้</title>
+<head><meta charset="UTF-8"><title>จัดการลูกค้ารายย่อย</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 """ + UNIFIED_LAYOUT + """
 </head>
 <body>
-    <div class="container my-4" style="max-width: 600px;">
-        <h3 class="fw-bold mb-4 text-warning">✏️ แก้ไขข้อมูลผู้ใช้ / ลูกค้า</h3>
-        <div class="card shadow p-4 bg-white">
-            <form method="POST" action="/update-user">
-                <input type="hidden" name="user" value="{{ username }}">
-                <input type="hidden" name="user_id" value="{{ u[0] }}">
-                <div class="mb-3"><label class="fw-bold">Username:</label><input type="text" name="username_val" class="form-control" value="{{ u[1] }}" required></div>
-                <div class="mb-3"><label class="fw-bold">Role / สิทธิ์:</label><input type="text" name="role_val" class="form-control" value="{{ u[2] }}" required></div>
-                <button type="submit" class="btn btn-warning w-100 fw-bold">💾 บันทึกการแก้ไข</button>
-            </form>
+    <div class="container my-4" style="max-width: 1000px;">
+        <h3 class="fw-bold mb-4 text-primary">👤 จัดการและสร้างลูกค้ารายย่อย</h3>
+        {% if msg %}<div class="alert alert-success py-2">{{ msg }}</div>{% endif %}
+        
+        <div class="row">
+            <div class="col-md-5 mb-4">
+                <div class="card shadow p-4 bg-white">
+                    <h5 class="fw-bold text-success mb-3">➕ เพิ่มลูกค้าใหม่</h5>
+                    <form method="POST" action="/save-customer-data">
+                        <input type="hidden" name="username" value="{{ username }}">
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">ชื่อ - นามสกุล หรือ ฉายาลูกค้า:</label>
+                            <input type="text" name="customer_name" class="form-control form-control-sm" required autofocus>
+                        </div>
+                        <h6 class="fw-bold text-primary small">💰 เรตจ่ายรางวัล</h6>
+                        <div class="row g-2 mb-2">
+                            <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">3ตรง:</label><input type="number" step="any" name="pay_3d" class="form-control form-control-sm" value="500"></div>
+                            <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">3โต๊ด:</label><input type="number" step="any" name="pay_3tod" class="form-control form-control-sm" value="100"></div>
+                            <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">2ตัว:</label><input type="number" step="any" name="pay_2d" class="form-control form-control-sm" value="70"></div>
+                        </div>
+                        <h6 class="fw-bold text-success small">📉 ส่วนลด (%)</h6>
+                        <div class="row g-2 mb-3">
+                            <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 3ตัว (%):</label><input type="number" step="any" name="disc_3d" class="form-control form-control-sm" value="0"></div>
+                            <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 2ตัว (%):</label><input type="number" step="any" name="disc_2d" class="form-control form-control-sm" value="0"></div>
+                        </div>
+                        <button type="submit" class="btn btn-primary w-100 fw-bold">💾 บันทึกลูกค้า</button>
+                    </form>
+                </div>
+            </div>
+            
+            <div class="col-md-7">
+                <div class="card shadow p-4 bg-white">
+                    <h5 class="fw-bold text-primary mb-3">🗂️ รายชื่อลูกค้ารายย่อยในสังกัด</h5>
+                    <table class="table table-striped table-bordered text-center align-middle" style="font-size: 0.85rem;">
+                        <thead class="table-dark"><tr><th>ID</th><th>ชื่อลูกค้า</th><th>เรต 3ตรง/2ตัว</th><th>ส่วนลด</th></tr></thead>
+                        <tbody>
+                            {% for c in cust_list %}
+                            <tr>
+                                <td>{{ c[0] }}</td>
+                                <td><b>{{ c[1] }}</b></td>
+                                <td>{{ c[2] }}/{{ c[4] }}</td>
+                                <td>{{ c[8] or 0 }}%</td>
+                            </tr>
+                            {% else %}
+                            <tr><td colspan="4" class="text-muted">ยังไม่มีลูกค้ารายย่อยในระบบ</td></tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
     </div>
 </body>
 </html>
 """
 
-@app.get("/edit-user", response_class=HTMLResponse)
-def edit_user_page(id: int, user: str):
+@app.get("/manage-customers", response_class=HTMLResponse)
+def manage_customers_page(user: str, msg: str = None):
     conn = connect_db()
     c = conn.cursor()
     c.execute("SELECT role FROM Users WHERE username=%s", (user,))
-    role = c.fetchone()[0]
-    c.execute("SELECT id, username, role FROM Users WHERE id=%s", (id,))
-    u = c.fetchone()
+    role = c.fetchone()[0].strip()
+    
+    if role == 'Admin':
+        c.execute("SELECT id, name, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_total FROM Customers ORDER BY id DESC")
+    else:
+        c.execute("SELECT id, name, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_total FROM Customers WHERE owner_username=%s ORDER BY id DESC", (user,))
+    cust_list = c.fetchall()
     conn.close()
-    return Template(EDIT_USER_TEMPLATE).render(username=user, role=role, u=u)
+    return Template(MANAGE_CUSTOMERS_TEMPLATE).render(username=user, role=role, cust_list=cust_list, msg=msg)
 
-@app.post("/update-user")
-def update_user(user: str = Form(...), user_id: int = Form(...), username_val: str = Form(...), role_val: str = Form(...)):
+@app.post("/save-customer-data")
+def save_customer_data(username: str = Form(...), customer_name: str = Form(...), pay_3d: float = Form(500), pay_3tod: float = Form(100), pay_2d: float = Form(70), disc_3d: float = Form(0), disc_2d: float = Form(0)):
     try:
         conn = connect_db()
         c = conn.cursor()
-        c.execute("UPDATE Users SET username=%s, role=%s WHERE id=%s", (username_val, role_val, user_id))
+        c.execute("""
+            INSERT INTO Customers (name, owner_username, pay_3d, pay_3tod, pay_2d, disc_3d, disc_2d, disc_total)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 0)
+        """, (customer_name, username, pay_3d, pay_3tod, pay_2d, disc_3d, disc_2d))
         conn.commit()
         conn.close()
-    except: pass
-    return RedirectResponse(url=f"/admin-users?user={user}&msg=แก้ไขสำเร็จ", status_code=303)
+        msg = f"เพิ่มลูกค้า '{customer_name}' สำเร็จ!"
+    except Exception as e:
+        msg = f"Error: {e}"
+    return RedirectResponse(url=f"/manage-customers?user={username}&msg={msg}", status_code=303)
 
-
-# ================= 7. เมนูเปลี่ยนรหัสผ่านสำหรับผู้ใช้งาน (Change Password) =================
-CHANGE_PASSWORD_TEMPLATE = """
+# ================= 6. เมนูด่วนที่ 3: ตั้งค่าเรตลูกค้าแยกตามหวย (/customer-rates-page) =================
+CUSTOMER_RATES_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
-<head><meta charset="UTF-8"><title>เปลี่ยนรหัสผ่าน</title>
+<head><meta charset="UTF-8"><title>ตั้งค่าเรตลูกค้าแยกตามหวย</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 """ + UNIFIED_LAYOUT + """
 </head>
 <body>
-    <div class="container my-5" style="max-width: 500px;">
-        <h3 class="fw-bold mb-4 text-primary">🔑 เปลี่ยนรหัสผ่านผู้ใช้งาน</h3>
-        {% if msg %}<div class="alert alert-success">{{ msg }}</div>{% endif %}
-        {% if error %}<div class="alert alert-danger">{{ error }}</div>{% endif %}
+    <div class="container my-4" style="max-width: 800px;">
+        <h3 class="fw-bold mb-4 text-warning">⚙️ กำหนดเรตและส่วนลดพิเศษ แยกตามหวย</h3>
+        {% if msg %}<div class="alert alert-success py-2">{{ msg }}</div>{% endif %}
         <div class="card shadow p-4 bg-white">
-            <form method="POST" action="/update-password">
-                <input type="hidden" name="user" value="{{ username }}">
-                <div class="mb-3">
-                    <label class="form-label fw-bold">รหัสผ่านปัจจุบัน:</label>
-                    <input type="password" name="old_password" class="form-control" required>
+            <form method="POST" action="/save-lotto-rate">
+                <input type="hidden" name="username" value="{{ username }}">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold small">เลือกตลาดหวย:</label>
+                        <select name="lotto_name" class="form-select form-select-sm" required>
+                            {% for m in campaigns %}
+                            <option value="{{ m[1] }}">{{ m[1] }} (งวด {{ m[2] }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold small">เลือกรายชื่อลูกค้า / ผู้ใช้:</label>
+                        <select name="target_id" class="form-select form-select-sm" required>
+                            {% for c in targets %}
+                            <option value="{{ c[0] }}">{{ c[1] }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label fw-bold">รหัสผ่านใหม่:</label>
-                    <input type="password" name="new_password" class="form-control" required>
+
+                <hr class="my-2">
+                <h6 class="fw-bold text-primary small">💰 อัตราจ่ายเงินรางวัลสำหรับหวยงวดนี้</h6>
+                <div class="row g-2 mb-3">
+                    <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">3ตัวตรง:</label><input type="number" step="any" name="pay_3d" class="form-control form-control-sm" value="500"></div>
+                    <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">3ตัวโต๊ด:</label><input type="number" step="any" name="pay_3tod" class="form-control form-control-sm" value="100"></div>
+                    <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">2ตัว:</label><input type="number" step="any" name="pay_2d" class="form-control form-control-sm" value="70"></div>
                 </div>
-                <div class="mb-3">
-                    <label class="form-label fw-bold">ยืนยันรหัสผ่านใหม่:</label>
-                    <input type="password" name="confirm_password" class="form-control" required>
+
+                <h6 class="fw-bold text-success small">📉 ส่วนลด (%) สำหรับหวยงวดนี้</h6>
+                <div class="row g-2 mb-3">
+                    <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 3ตัว (%):</label><input type="number" step="any" name="disc_3d" class="form-control form-control-sm" value="0"></div>
+                    <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 2ตัว (%):</label><input type="number" step="any" name="disc_2d" class="form-control form-control-sm" value="0"></div>
                 </div>
-                <button type="submit" class="btn btn-primary w-100 fw-bold py-2">💾 บันทึกรหัสผ่านใหม่</button>
+
+                <button type="submit" class="btn btn-warning w-100 fw-bold">💾 บันทึกเรตเฉพาะหวยนี้</button>
             </form>
         </div>
     </div>
@@ -824,88 +842,150 @@ CHANGE_PASSWORD_TEMPLATE = """
 </html>
 """
 
-@app.get("/change-password", response_class=HTMLResponse)
-def change_password_page(user: str, msg: str = None, error: str = None):
+@app.get("/customer-rates-page", response_class=HTMLResponse)
+def customer_rates_page(user: str, msg: str = None):
     conn = connect_db()
     c = conn.cursor()
     c.execute("SELECT role FROM Users WHERE username=%s", (user,))
-    res = c.fetchone()
-    role = res[0] if res else "Agent"
+    role = c.fetchone()[0].strip()
+    
+    c.execute("SELECT id, lotto_name, draw_date FROM LotteryCampaigns WHERE status='Active' ORDER BY id DESC")
+    campaigns = c.fetchall()
+    
+    targets = []
+    c.execute("SELECT id, name FROM Customers WHERE owner_username=%s ORDER BY id DESC", (user,))
+    for row in c.fetchall(): targets.append((str(row[0]), f"ลูกค้า: {row[1]}"))
+    c.execute("SELECT id, username FROM Users WHERE parent_username=%s ORDER BY id DESC", (user,))
+    for row in c.fetchall(): targets.append((f"user_{row[0]}", f"user: {row[1]}"))
+
     conn.close()
-    return Template(CHANGE_PASSWORD_TEMPLATE).render(username=user, role=role, msg=msg, error=error)
+    return Template(CUSTOMER_RATES_TEMPLATE).render(username=user, role=role, campaigns=campaigns, targets=targets, msg=msg)
+
+@app.post("/save-lotto-rate")
+def save_lotto_rate(username: str = Form(...), target_id: str = Form(...), lotto_name: str = Form(...), pay_3d: float = Form(500), pay_3tod: float = Form(100), pay_2d: float = Form(70), disc_3d: float = Form(0), disc_2d: float = Form(0)):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("""
+            INSERT INTO CustomerLottoRates (target_id, lotto_name, pay_3d, pay_3tod, pay_2d, disc_3d, disc_2d)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (target_id, lotto_name, pay_3d, pay_3tod, pay_2d, disc_3d, disc_2d))
+        conn.commit()
+        conn.close()
+        msg = f"บันทึกเรตหวย '{lotto_name}' สำเร็จ!"
+    except Exception as e:
+        msg = f"Error: {e}"
+    return RedirectResponse(url=f"/customer-rates-page?user={username}&msg={msg}", status_code=303)
+
+# ================= 7. เมนูด่วนที่ 5: รายงานผลสรุปยอด (/agent-reports) =================
+AGENT_REPORTS_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="th">
+<head><meta charset="UTF-8"><title>รายงานสรุปผลและยอดขาย</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+""" + UNIFIED_LAYOUT + """
+</head>
+<body>
+    <div class="container my-4" style="max-width: 1100px;">
+        <h3 class="fw-bold mb-4 text-primary">📊 รายงานสรุปยอดขาย & ตรวจรางวัล</h3>
+        
+        <div class="card shadow p-3 bg-white mb-4">
+            <form method="GET" action="/agent-reports" class="row g-2 align-items-center">
+                <input type="hidden" name="user" value="{{ username }}">
+                <div class="col-md-3">
+                    <label class="small fw-bold">กรองรายชื่อ:</label>
+                    <select name="filter_target" class="form-select form-select-sm">
+                        <option value="ALL">-- ลูกค้า/สายงาน ทั้งหมด --</option>
+                        {% for t in targets %}
+                        <option value="{{ t[0] }}" {% if t[0] == selected_target %}selected{% endif %}>{{ t[1] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="small fw-bold">กรองงวดหวย:</label>
+                    <select name="filter_lotto" class="form-select form-select-sm">
+                        <option value="ALL">-- หวยทุกประเภท --</option>
+                        {% for l in lotto_list %}
+                        <option value="{{ l[0] }}" {% if l[0] == selected_lotto %}selected{% endif %}>{{ l[0] }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="small fw-bold">สถานะผลรางวัล:</label>
+                    <select name="filter_win" class="form-select form-select-sm">
+                        <option value="ALL">รวมทั้งหมด</option>
+                        <option value="WIN">เฉพาะยอดถูกรางวัล</option>
+                    </select>
+                </div>
+                <div class="col-md-3 mt-4">
+                    <button type="submit" class="btn btn-primary btn-sm w-100 fw-bold">🔍 ค้นหารายงาน</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="row text-center mb-4">
+            <div class="col-md-4"><div class="card bg-primary text-white p-3 shadow-sm"><h5>ยอดซื้อรวม</h5><h3 class="fw-bold">{{ total_buy }}</h3></div></div>
+            <div class="col-md-4"><div class="card bg-warning text-dark p-3 shadow-sm"><h5>ส่วนลดรวม</h5><h3 class="fw-bold">{{ total_disc }}</h3></div></div>
+            <div class="col-md-4"><div class="card bg-success text-white p-3 shadow-sm"><h5>ยอดสุทธิ</h5><h3 class="fw-bold">{{ total_net }}</h3></div></div>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+@app.get("/agent-reports", response_class=HTMLResponse)
+def agent_reports_page(user: str, filter_target: str = "ALL", filter_lotto: str = "ALL", filter_win: str = "ALL"):
+    conn = connect_db()
+    c = conn.cursor()
+    c.execute("SELECT role FROM Users WHERE username=%s", (user,))
+    role = c.fetchone()[0].strip()
+    
+    targets = []
+    c.execute("SELECT id, name FROM Customers WHERE owner_username=%s ORDER BY id DESC", (user,))
+    for row in c.fetchall(): targets.append((str(row[0]), f"ลูกค้า: {row[1]}"))
+    c.execute("SELECT id, username FROM Users WHERE parent_username=%s ORDER BY id DESC", (user,))
+    for row in c.fetchall(): targets.append((f"user_{row[0]}", f"user: {row[1]}"))
+
+    c.execute("SELECT DISTINCT lotto_name FROM LotteryCampaigns")
+    lotto_list = c.fetchall()
+
+    conn.close()
+    return Template(AGENT_REPORTS_TEMPLATE).render(
+        username=user, role=role, targets=targets, lotto_list=lotto_list,
+        selected_target=filter_target, selected_lotto=filter_lotto,
+        total_buy="0.00", total_disc="0.00", total_net="0.00"
+    )
+
+# ================= 8. เมนูตั้งค่ารหัสผ่าน & Admin อื่นๆ =================
+@app.get("/change-password", response_class=HTMLResponse)
+def change_password_page(user: str):
+    conn = connect_db()
+    c = conn.cursor()
+    c.execute("SELECT role FROM Users WHERE username=%s", (user,))
+    role = c.fetchone()[0].strip()
+    conn.close()
+    return Template("""<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">""" + UNIFIED_LAYOUT + """</head><body><div class="container my-5" style="max-width:500px;"><div class="card shadow p-4"><h4>🔑 เปลี่ยนรหัสผ่าน</h4><form method="POST" action="/update-password"><input type="hidden" name="user" value="{{username}}"><div class="mb-3"><label>รหัสใหม่:</label><input type="password" name="new_password" class="form-control" required></div><button type="submit" class="btn btn-warning w-100 fw-bold">บันทึก</button></form></div></div></body></html>""").render(username=user, role=role)
 
 @app.post("/update-password")
-def update_password(user: str = Form(...), old_password: str = Form(...), new_password: str = Form(...), confirm_password: str = Form(...)):
-    if new_password != confirm_password:
-        return RedirectResponse(url=f"/change-password?user={user}&error=รหัสผ่านใหม่ไม่ตรงกัน", status_code=303)
-    try:
-        conn = connect_db()
-        c = conn.cursor()
-        c.execute("SELECT id FROM Users WHERE username=%s AND password=%s", (user, old_password))
-        user_check = c.fetchone()
-        if not user_check:
-            conn.close()
-            return RedirectResponse(url=f"/change-password?user={user}&error=รหัสผ่านปัจจุบันไม่ถูกต้อง", status_code=303)
-        c.execute("UPDATE Users SET password=%s WHERE username=%s", (new_password, user))
-        conn.commit()
-        conn.close()
-        return RedirectResponse(url=f"/change-password?user={user}&msg=เปลี่ยนรหัสผ่านสำเร็จเรียบร้อยแล้ว", status_code=303)
-    except Exception as e:
-        return RedirectResponse(url=f"/change-password?user={user}&error=Error: {str(e)}", status_code=303)
-
-
-# ================= หน้าจอเสริมอื่นๆ (Campaigns, Blocked, Rates, Settlement, Reports, Reset) =================
-@app.get("/admin-campaigns", response_class=HTMLResponse)
-def admin_campaigns(user: str):
+def update_password(user: str = Form(...), new_password: str = Form(...)):
     conn = connect_db()
     c = conn.cursor()
-    c.execute("SELECT role FROM Users WHERE username=%s", (user,))
-    role = c.fetchone()[0]
-    c.execute("SELECT id, lotto_name, draw_date, status, close_time FROM LotteryCampaigns ORDER BY id DESC")
-    campaigns = c.fetchall()
+    c.execute("UPDATE Users SET password=%s WHERE username=%s", (new_password, user))
+    conn.commit()
     conn.close()
-    return Template("""<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">""" + UNIFIED_LAYOUT + """</head><body><div class="container my-4"><h3>จัดการงวดหวยและตลาด</h3><table class="table table-bordered mt-3"><thead class="table-dark"><tr><th>หวย</th><th>งวด</th><th>เวลาปิดรับ</th><th>สถานะ</th></tr></thead><tbody>{% for cp in campaigns %}<tr><td>{{cp[1]}}</td><td>{{cp[2]}}</td><td>{{cp[4]}}</td><td>{{cp[3]}}</td></tr>{% endfor %}</tbody></table></div></body></html>""").render(username=user, role=role, campaigns=campaigns)
+    return RedirectResponse(url=f"/select-market?user={user}", status_code=303)
+
+@app.get("/admin-campaigns", response_class=HTMLResponse)
+def admin_campaigns(user: str):
+    return RedirectResponse(url=f"/select-market?user={user}", status_code=303)
 
 @app.get("/admin-blocked", response_class=HTMLResponse)
 def admin_blocked(user: str):
     return RedirectResponse(url=f"/select-market?user={user}", status_code=303)
 
-@app.get("/customer-rates-page", response_class=HTMLResponse)
-def customer_rates(user: str):
-    return RedirectResponse(url=f"/select-market?user={user}", status_code=303)
-
-@app.get("/agent-settlement", response_class=HTMLResponse)
-def agent_settlement(user: str):
-    return RedirectResponse(url=f"/select-market?user={user}", status_code=303)
-
-@app.get("/agent-reports", response_class=HTMLResponse)
-def agent_reports(user: str):
-    return RedirectResponse(url=f"/select-market?user={user}", status_code=303)
-
 @app.get("/system-reset", response_class=HTMLResponse)
-def system_reset_page(user: str, error: str = None):
-    conn = connect_db()
-    c = conn.cursor()
-    c.execute("SELECT role FROM Users WHERE username=%s", (user,))
-    role = c.fetchone()[0]
-    conn.close()
-    return Template("""<!DOCTYPE html><html lang="th"><head><meta charset="UTF-8"><link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">""" + UNIFIED_LAYOUT + """</head><body><div class="container my-5 text-center" style="max-width:500px;"><div class="card shadow p-4 border-danger"><h3 class="text-danger fw-bold">⚠️ รีเซ็ตระบบ</h3>{% if error %}<div class="alert alert-danger">{{error}}</div>{% endif %}<form method="POST" action="/execute-system-reset"><input type="hidden" name="username" value="{{username}}"><div class="mb-3 text-start"><label class="fw-bold">รหัสผ่าน Admin:</label><input type="password" name="admin_password" class="form-control" required></div><button type="submit" class="btn btn-danger w-100 fw-bold" onclick="return confirm('ยืนยันล้างข้อมูลทั้งหมด?')">ล้างข้อมูลและรีเซ็ตระบบ</button></form></div></div></body></html>""").render(username=user, role=role, error=error)
-
-@app.post("/execute-system-reset")
-def execute_system_reset(username: str = Form(...), admin_password: str = Form(...)):
-    try:
-        conn = connect_db()
-        c = conn.cursor()
-        c.execute("SELECT id FROM Users WHERE username=%s AND password=%s AND role='Admin'", (username, admin_password))
-        if not c.fetchone():
-            conn.close()
-            return RedirectResponse(url=f"/system-reset?user={username}&error=รหัสผ่านไม่ถูกต้อง", status_code=303)
-        c.execute("DELETE FROM Transactions; DELETE FROM TempDraft; DELETE FROM BlockedNumbers; DELETE FROM CustomerLottoRates; DELETE FROM AgentSettlements; DELETE FROM DrawResults; DELETE FROM Customers; DELETE FROM LotteryCampaigns; DELETE FROM Users WHERE username != %s;", (username,))
-        conn.commit()
-        conn.close()
-        return RedirectResponse(url="/login?error=รีเซ็ตระบบสำเร็จ", status_code=303)
-    except Exception as e:
-        return RedirectResponse(url=f"/system-reset?user={username}&error={str(e)}", status_code=303)
+def system_reset(user: str):
+    return RedirectResponse(url=f"/select-market?user={user}", status_code=303)
 
 @app.get("/logout")
 def logout():
