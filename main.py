@@ -22,7 +22,7 @@ def get_thai_time():
     return datetime.utcnow() + timedelta(hours=7)
 
 # --- Startup Migration ตารางและคอลัมน์พื้นฐานทั้งหมด ---
-# --- Startup Migration ตารางและคอลัมน์พื้นฐานทั้งหมด (ฉบับแก้ไขคอลัมน์ target_id) ---
+# --- Startup Migration ตารางและคอลัมน์พื้นฐานทั้งหมด (ฉบับแก้ไขประเภทข้อมูล customer_id ใน TempDraft) ---
 @app.on_event("startup")
 def startup_agent_db():
     try:
@@ -60,8 +60,20 @@ def startup_agent_db():
                 disc_total NUMERIC(5,2)
             );
         """)
+
+        # 3. แก้ไขประเภทข้อมูล customer_id ในตาราง TempDraft ให้เป็น VARCHAR(100)
+        c.execute("""
+            DO $$ 
+            BEGIN 
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='tempdraft') THEN
+                    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tempdraft' AND column_name='customer_id' AND data_type != 'character varying') THEN
+                        ALTER TABLE TempDraft ALTER COLUMN customer_id TYPE VARCHAR(100) USING customer_id::varchar;
+                    END IF;
+                END IF;
+            END $$;
+        """)
         
-        # 3. เพิ่มคอลัมน์ที่ขาดหายในตาราง CustomerLottoRates อัตโนมัติ
+        # 4. เพิ่มคอลัมน์ที่ขาดหายในตาราง CustomerLottoRates
         rate_cols_to_add = [
             ("target_type", "VARCHAR(20) DEFAULT 'Customer'"),
             ("target_id", "VARCHAR(100)"),
@@ -86,7 +98,7 @@ def startup_agent_db():
                 END $$;
             """)
 
-        # 4. ตรวจสอบคอลัมน์ close_time ใน LotteryCampaigns
+        # 5. ตรวจสอบคอลัมน์ close_time ใน LotteryCampaigns
         c.execute("""
             DO $$ 
             BEGIN 
@@ -96,7 +108,7 @@ def startup_agent_db():
             END $$;
         """)
 
-        # 5. ตรวจสอบคอลัมน์ใน Users
+        # 6. ตรวจสอบคอลัมน์ใน Users
         user_cols_to_add = [
             ("parent_username", "VARCHAR(100) DEFAULT 'admin'"),
             ("pay_3d", "NUMERIC(10,2) DEFAULT 500"),
@@ -119,7 +131,7 @@ def startup_agent_db():
                 END $$;
             """)
 
-        # 6. ตรวจสอบคอลัมน์ใน Customers
+        # 7. ตรวจสอบคอลัมน์ใน Customers
         c.execute("""
             DO $$ 
             BEGIN 
