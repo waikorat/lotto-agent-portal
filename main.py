@@ -417,21 +417,57 @@ PORTAL_TEMPLATE = """
                 }
             }, 1000);
         }
+
+        // ฟังก์ชันคำนวณเลขด่วน
+        function apply6Box() {
+            let num = document.getElementById('mainNumInput').value.trim();
+            if (num.length !== 3) { alert("กรุณากรอกตัวเลข 3 หลัก"); return; }
+            let perms = new Set(); let arr = num.split('');
+            function permute(a, l, r) {
+                if (l === r) { perms.add(a.join('')); }
+                else { for (let i = l; i <= r; i++) { [a[l], a[i]] = [a[i], a[l]]; permute(a, l+1, r); [a[l], a[i]] = [a[i], a[l]]; } }
+            }
+            permute(arr, 0, arr.length - 1);
+            updatePreview(Array.from(perms).join(','));
+        }
+        function apply19Door() {
+            let digit = document.getElementById('mainNumInput').value.trim();
+            if (digit.length !== 1) { alert("กรุณากรอกตัวเลข 1 หลัก"); return; }
+            let doors = [];
+            for (let i = 0; i <= 9; i++) {
+                let n1 = digit + i, n2 = i + digit;
+                if (!doors.includes(n1)) doors.push(n1);
+                if (!doors.includes(n2)) doors.push(n2);
+            }
+            updatePreview(doors.join(','));
+        }
+        function applyFrontRoot() {
+            let digit = document.getElementById('mainNumInput').value.trim();
+            if (digit.length !== 1) { alert("กรุณากรอกตัวเลข 1 หลัก"); return; }
+            let doors = []; for (let i = 0; i <= 9; i++) { doors.push(digit + i); }
+            updatePreview(doors.join(','));
+        }
+        function applyBackRoot() {
+            let digit = document.getElementById('mainNumInput').value.trim();
+            if (digit.length !== 1) { alert("กรุณากรอกตัวเลข 1 หลัก"); return; }
+            let doors = []; for (let i = 0; i <= 9; i++) { doors.push(i + digit); }
+            updatePreview(doors.join(','));
+        }
+
+        // อัปเดตกล่อง Preview
         function updatePreview(nums) {
             let topAmt = document.getElementById('topAmtInput').value || '0';
             let botAmt = document.getElementById('botAmtInput').value || '0';
-            document.getElementById('previewContent').innerHTML = `<span>${nums}</span> = <span class="badge bg-white text-dark border px-2">${topAmt}</span> * <span class="badge bg-white text-dark border px-2">${botAmt}</span>`;
+            document.getElementById('previewContent').innerHTML = `<span class="text-primary fw-bold" style="word-break: break-all;">${nums}</span> <div class="w-100 mt-1">➡️ บน <span class="badge bg-white text-dark border px-2">${topAmt}</span> | ล่าง <span class="badge bg-white text-dark border px-2">${botAmt}</span></div>`;
             document.getElementById('hiddenGeneratedNums').value = nums;
         }
+
         function refreshPreviewOnInput() {
-            let hiddenNums = document.getElementById('hiddenGeneratedNums').value;
-            if(hiddenNums) { updatePreview(hiddenNums); }
-            else {
-                let num = document.getElementById('mainNumInput').value;
-                let topAmt = document.getElementById('topAmtInput').value || '0';
-                let botAmt = document.getElementById('botAmtInput').value || '0';
-                document.getElementById('previewContent').innerHTML = `<span>${num}</span> = <span class="badge bg-white text-dark border px-2">${topAmt}</span> * <span class="badge bg-white text-dark border px-2">${botAmt}</span>`;
-            }
+            document.getElementById('hiddenGeneratedNums').value = ""; // เคลียร์เลขที่รูดไว้เมื่อผู้ใช้พิมพ์ใหม่
+            let num = document.getElementById('mainNumInput').value;
+            let topAmt = document.getElementById('topAmtInput').value || '0';
+            let botAmt = document.getElementById('botAmtInput').value || '0';
+            document.getElementById('previewContent').innerHTML = `<span class="text-primary fw-bold">${num}</span> <div class="w-100 mt-1">➡️ บน <span class="badge bg-white text-dark border px-2">${topAmt}</span> | ล่าง <span class="badge bg-white text-dark border px-2">${botAmt}</span></div>`;
         }
     </script>
 </head>
@@ -508,14 +544,14 @@ PORTAL_TEMPLATE = """
             {% else %}
 
             <div class="quick-btn-group d-flex gap-2 mb-3">
-                <button type="button" class="quick-btn" onclick="alert('ฟังก์ชันนี้กำลังอัปเดต')">6กลับ</button>
-                <button type="button" class="quick-btn" onclick="alert('ฟังก์ชันนี้กำลังอัปเดต')">รูด19ประตู</button>
-                <button type="button" class="quick-btn" onclick="alert('ฟังก์ชันนี้กำลังอัปเดต')">รูดหน้า</button>
-                <button type="button" class="quick-btn" onclick="alert('ฟังก์ชันนี้กำลังอัปเดต')">รูดหลัง</button>
+                <button type="button" class="quick-btn" onclick="apply6Box()">6กลับ</button>
+                <button type="button" class="quick-btn" onclick="apply19Door()">รูด19ประตู</button>
+                <button type="button" class="quick-btn" onclick="applyFrontRoot()">รูดหน้า</button>
+                <button type="button" class="quick-btn" onclick="applyBackRoot()">รูดหลัง</button>
             </div>
 
             <div class="preview-box" id="previewContent">
-                <span class="text-muted small">preview:- (เลือกฟังก์ชันคีย์ด่วน หรือพิมพ์เลขในฟอร์มด้านล่าง)</span>
+                <span class="text-muted small">preview:- (พิมพ์เลข 1 ตัวแล้วกดรูด หรือพิมพ์เลข 3 ตัวแล้วกด 6กลับ)</span>
             </div>
 
             <form method="POST" action="/portal-add-draft" class="p-3 bg-white rounded shadow-sm border mb-3">
@@ -683,27 +719,29 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None, erro
     finally:
         if 'conn' in locals(): conn.close()
 
-# ================= [✅ ปรับปรุง] API รับคีย์โพย (รองรับ บน/ล่าง และคำนวณเรตออโต้) =================
+# ================= API รับคีย์โพย (รองรับ บน/ล่าง, ปุ่มด่วน และคำนวณเรตออโต้) =================
 @app.post("/portal-add-draft")
 def portal_add_draft(
     user: str = Form(...), market: str = Form(...), draw: str = Form(...), 
-    num_input: str = Form(...), top_amt: float = Form(0), bot_amt: float = Form(0), 
+    num_input: str = Form(...), generated_nums: str = Form(""), 
+    top_amt: float = Form(0), bot_amt: float = Form(0), 
     customer_id: str = Form(...)
 ):
     try:
         conn = connect_db()
         c = conn.cursor()
         
-        num = num_input.strip()
-        num_len = len(num)
+        # ตรวจสอบว่ามีการกดปุ่มด่วนมาหรือไม่ (ถ้ามีใช้ generated_nums, ถ้าไม่มีใช้ที่พิมพ์ในช่อง)
+        target_nums_str = generated_nums if generated_nums.strip() != "" else num_input
+        nums_list = [n.strip() for n in target_nums_str.split(",") if n.strip()]
         
-        if num_len not in [1, 2, 3]:
-            return RedirectResponse(url=f"/portal?user={user}&market={market}&draw={draw}&customer_id={customer_id}&error_msg=ตัวเลขต้องเป็น 1, 2 หรือ 3 หลัก", status_code=303)
+        if not nums_list:
+            return RedirectResponse(url=f"/portal?user={user}&market={market}&draw={draw}&customer_id={customer_id}&error_msg=กรุณากรอกตัวเลข", status_code=303)
 
-        # 1. ดึงเรตลูกค้า เพื่อมาคำนวณส่วนลด/ยอดสุทธิ
+        # 1. ดึงเรตลูกค้า
         c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM CustomerLottoRates WHERE target_id=%s AND lotto_name=%s", (customer_id, market))
         rate = c.fetchone()
-        if not rate: # ดึงเรต Default ถ้าไม่มีเรตเฉพาะหวย
+        if not rate: 
             if customer_id.startswith("user_"):
                 c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM Users WHERE id=%s", (customer_id.replace("user_",""),))
             else:
@@ -712,25 +750,31 @@ def portal_add_draft(
 
         if not rate: rate = (500, 100, 70, 3.2, 4.2, 0, 0, 0, 0)
         
-        # 2. ฟังก์ชันช่วยบันทึกลง DB
-        def insert_draft(play_type, amt, payout, discount_percent):
+        # ฟังก์ชันย่อยสำหรับบันทึกลง DB
+        def insert_draft(play_type, num_val, amt, payout, discount_percent):
             net = amt - (amt * (discount_percent / 100))
             c.execute("""
                 INSERT INTO TempDraft (username, customer_id, customer_type, num, amt_teng, type, payout_rate, discount, net, status) 
                 VALUES (%s, %s, 'Customer', %s, %s, %s, %s, %s, %s, 'ปกติ')
-            """, (user, customer_id, num, amt, play_type, payout, discount_percent, net))
+            """, (user, customer_id, num_val, amt, play_type, payout, discount_percent, net))
 
-        # 3. บันทึกยอด 'บน' (Top)
-        if top_amt > 0:
-            if num_len == 3: insert_draft("3ตัวตรง", top_amt, rate[0], rate[5] if rate[5] > 0 else rate[8])
-            elif num_len == 2: insert_draft("2ตัวบน", top_amt, rate[2], rate[6] if rate[6] > 0 else rate[8])
-            elif num_len == 1: insert_draft("วิ่งบน", top_amt, rate[3], rate[7] if rate[7] > 0 else rate[8])
+        # 2. วนลูปบันทึกทีละตัวเลขจากที่สร้างมาได้
+        for num in nums_list:
+            num_len = len(num)
+            if num_len not in [1, 2, 3]:
+                continue # ข้ามตัวเลขที่ไม่ตรงเงื่อนไข
+                
+            # บันทึกยอด 'บน' (Top)
+            if top_amt > 0:
+                if num_len == 3: insert_draft("3ตัวตรง", num, top_amt, rate[0], rate[5] if rate[5] > 0 else rate[8])
+                elif num_len == 2: insert_draft("2ตัวบน", num, top_amt, rate[2], rate[6] if rate[6] > 0 else rate[8])
+                elif num_len == 1: insert_draft("วิ่งบน", num, top_amt, rate[3], rate[7] if rate[7] > 0 else rate[8])
 
-        # 4. บันทึกยอด 'ล่าง' (Bot)
-        if bot_amt > 0:
-            if num_len == 3: insert_draft("3ตัวโต๊ด", bot_amt, rate[1], rate[5] if rate[5] > 0 else rate[8])
-            elif num_len == 2: insert_draft("2ตัวล่าง", bot_amt, rate[2], rate[6] if rate[6] > 0 else rate[8])
-            elif num_len == 1: insert_draft("วิ่งล่าง", bot_amt, rate[4], rate[7] if rate[7] > 0 else rate[8])
+            # บันทึกยอด 'ล่าง' (Bot)
+            if bot_amt > 0:
+                if num_len == 3: insert_draft("3ตัวโต๊ด", num, bot_amt, rate[1], rate[5] if rate[5] > 0 else rate[8])
+                elif num_len == 2: insert_draft("2ตัวล่าง", num, bot_amt, rate[2], rate[6] if rate[6] > 0 else rate[8])
+                elif num_len == 1: insert_draft("วิ่งล่าง", num, bot_amt, rate[4], rate[7] if rate[7] > 0 else rate[8])
 
         conn.commit()
     except Exception as e:
