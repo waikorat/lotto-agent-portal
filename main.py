@@ -21,14 +21,13 @@ def connect_db():
 def get_thai_time():
     return datetime.utcnow() + timedelta(hours=7)
 
-# --- Startup Migration ตารางและคอลัมน์พื้นฐานทั้งหมด ---
+# --- Startup Migration ---
 @app.on_event("startup")
 def startup_agent_db():
     try:
         conn = connect_db()
         c = conn.cursor()
         
-        # 1. สร้างตาราง AgentSettlements
         c.execute("""
             CREATE TABLE IF NOT EXISTS AgentSettlements (
                 id SERIAL PRIMARY KEY,
@@ -41,7 +40,6 @@ def startup_agent_db():
             );
         """)
         
-        # 2. สร้างตาราง CustomerLottoRates
         c.execute("""
             CREATE TABLE IF NOT EXISTS CustomerLottoRates (
                 id SERIAL PRIMARY KEY,
@@ -60,7 +58,6 @@ def startup_agent_db():
             );
         """)
 
-        # 3. แก้ไขประเภทข้อมูล customer_id ในตาราง TempDraft ให้เป็น VARCHAR(100)
         c.execute("""
             DO $$ 
             BEGIN 
@@ -72,7 +69,6 @@ def startup_agent_db():
             END $$;
         """)
         
-        # 4. เพิ่มคอลัมน์ที่ขาดหายในตาราง CustomerLottoRates
         rate_cols_to_add = [
             ("target_type", "VARCHAR(20) DEFAULT 'Customer'"),
             ("target_id", "VARCHAR(100)"),
@@ -97,7 +93,6 @@ def startup_agent_db():
                 END $$;
             """)
 
-        # 5. ตรวจสอบคอลัมน์ close_time ใน LotteryCampaigns
         c.execute("""
             DO $$ 
             BEGIN 
@@ -107,7 +102,6 @@ def startup_agent_db():
             END $$;
         """)
 
-        # 6. ตรวจสอบคอลัมน์ใน Users
         user_cols_to_add = [
             ("parent_username", "VARCHAR(100) DEFAULT 'admin'"),
             ("pay_3d", "NUMERIC(10,2) DEFAULT 500"),
@@ -130,7 +124,6 @@ def startup_agent_db():
                 END $$;
             """)
 
-        # 7. ตรวจสอบคอลัมน์ใน Customers
         c.execute("""
             DO $$ 
             BEGIN 
@@ -146,7 +139,7 @@ def startup_agent_db():
     finally:
         if 'conn' in locals(): conn.close()
 
-# ================= Helper ดึงสัญลักษณ์โลโก้ =================
+# ================= Helper Functions =================
 def get_lotto_logo(lotto_name):
     name = lotto_name.lower()
     if "ลาวพัฒนา" in name: return "/static/ลาวพัฒนาโลโก้.png"
@@ -162,7 +155,6 @@ def get_lotto_logo(lotto_name):
     elif "ลาว" in name: return "https://upload.wikimedia.org/wikipedia/commons/5/56/Flag_of_Laos.svg"
     else: return "https://cdn-icons-png.flaticon.com/512/10383/10383210.png"
 
-# ================= Helper ดึงข้อมูลดิบเลขอั้น =================
 def get_blocked_display_data(draw_date):
     try:
         conn = connect_db()
@@ -191,7 +183,7 @@ def get_blocked_display_data(draw_date):
     finally:
         if 'conn' in locals(): conn.close()
 
-# ================= UNIFIED LAYOUT CSS & NAVBAR =================
+# ================= UNIFIED LAYOUT =================
 UNIFIED_LAYOUT = """
 <style>
     * { box-sizing: border-box; }
@@ -374,7 +366,115 @@ def select_market(user: str):
         
     return Template(SELECT_MARKET_TEMPLATE).render(username=user, role=role, categories=categories)
 
-# ================= 3. หน้าบันทึกโพย POS (/portal) =================
+# ================= 3. หน้าตั้งค่าเรตลูกค้าแยกตามหวย (/customer-rates-page) =================
+CUSTOMER_RATES_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="th">
+<head><meta charset="UTF-8"><title>ตั้งค่าเรตลูกค้าแยกตามหวย</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+""" + UNIFIED_LAYOUT + """
+</head>
+<body>
+    <div class="container my-4" style="max-width: 800px;">
+        <h3 class="fw-bold mb-4 text-warning">⚙️ กำหนดเรตและส่วนลดพิเศษ แยกตามหวย</h3>
+        {% if msg %}<div class="alert alert-success py-2">{{ msg }}</div>{% endif %}
+        <div class="card shadow p-4 bg-white">
+            <form method="POST" action="/save-lotto-rate">
+                <input type="hidden" name="username" value="{{ username }}">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold small">เลือกตลาดหวย:</label>
+                        <select name="lotto_name" class="form-select form-select-sm" required>
+                            {% for m in campaigns %}
+                            <option value="{{ m[1] }}">{{ m[1] }} (งวด {{ m[2] }})</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold small">เลือกรายชื่อลูกค้า / ผู้ใช้:</label>
+                        <select name="target_id" class="form-select form-select-sm" required>
+                            {% for c in targets %}
+                            <option value="{{ c[0] }}">{{ c[1] }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <hr class="my-2">
+                <h6 class="fw-bold text-primary small">💰 อัตราจ่ายเงินรางวัลสำหรับหวยงวดนี้</h6>
+                <div class="row g-2 mb-3">
+                    <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">3ตรง:</label><input type="number" step="any" name="pay_3d" class="form-control form-control-sm" value="500"></div>
+                    <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">3โต๊ด:</label><input type="number" step="any" name="pay_3tod" class="form-control form-control-sm" value="100"></div>
+                    <div class="col-4"><label class="extra-small text-muted" style="font-size:0.75rem;">2ตัว:</label><input type="number" step="any" name="pay_2d" class="form-control form-control-sm" value="70"></div>
+                    <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">วิ่งบน:</label><input type="number" step="any" name="pay_run_top" class="form-control form-control-sm" value="3.2"></div>
+                    <div class="col-6"><label class="extra-small text-danger" style="font-size:0.75rem;">วิ่งล่าง:</label><input type="number" step="any" name="pay_run_bot" class="form-control form-control-sm" value="4.2"></div>
+                </div>
+
+                <h6 class="fw-bold text-success small">📉 ส่วนลด (%) สำหรับหวยงวดนี้</h6>
+                <div class="row g-2 mb-3">
+                    <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 3ตัว (%):</label><input type="number" step="any" name="disc_3d" class="form-control form-control-sm" value="0"></div>
+                    <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลด 2ตัว (%):</label><input type="number" step="any" name="disc_2d" class="form-control form-control-sm" value="0"></div>
+                    <div class="col-6"><label class="extra-small text-muted" style="font-size:0.75rem;">ส่วนลดวิ่ง (%):</label><input type="number" step="any" name="disc_run" class="form-control form-control-sm" value="0"></div>
+                    <div class="col-6"><label class="extra-small text-success fw-bold" style="font-size:0.75rem;">ส่วนลดรวม (%):</label><input type="number" step="any" name="disc_total" class="form-control form-control-sm" value="0"></div>
+                </div>
+
+                <button type="submit" class="btn btn-warning w-100 fw-bold">💾 บันทึกเรตเฉพาะหวยนี้</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+"""
+
+@app.get("/customer-rates-page", response_class=HTMLResponse)
+def customer_rates_page(user: str, msg: str = None):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("SELECT role FROM Users WHERE username=%s", (user,))
+        res = c.fetchone()
+        role = res[0].strip() if res else "Member"
+
+        c.execute("SELECT id, lotto_name, draw_date FROM LotteryCampaigns WHERE status='Active' ORDER BY id DESC")
+        campaigns = c.fetchall()
+
+        targets = []
+        c.execute("SELECT id, name FROM Customers ORDER BY id DESC")
+        for row in c.fetchall(): targets.append((str(row[0]), f"ลูกค้า: {row[1]}"))
+        c.execute("SELECT id, username FROM Users ORDER BY id DESC")
+        for row in c.fetchall(): targets.append((f"user_{row[0]}", f"ผู้ใช้ (สายงาน): {row[1]}"))
+
+    except Exception as e:
+        role, campaigns, targets = "Member", [], []
+    finally:
+        if 'conn' in locals(): conn.close()
+
+    return Template(CUSTOMER_RATES_TEMPLATE).render(username=user, role=role, campaigns=campaigns, targets=targets, msg=msg)
+
+@app.post("/save-lotto-rate")
+def save_lotto_rate(
+    username: str = Form(...), target_id: str = Form(...), lotto_name: str = Form(...), 
+    pay_3d: float = Form(500), pay_3tod: float = Form(100), pay_2d: float = Form(70), 
+    pay_run_top: float = Form(3.2), pay_run_bot: float = Form(4.2), 
+    disc_3d: float = Form(0), disc_2d: float = Form(0), disc_run: float = Form(0), disc_total: float = Form(0)
+):
+    try:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute("DELETE FROM CustomerLottoRates WHERE target_id=%s AND lotto_name=%s", (target_id, lotto_name))
+        c.execute("""
+            INSERT INTO CustomerLottoRates (target_id, lotto_name, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (target_id, lotto_name, pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total))
+        conn.commit()
+        msg = f"บันทึกเรตหวย '{lotto_name}' สำเร็จ!"
+    except Exception as e:
+        msg = f"Error: {e}"
+    finally:
+        if 'conn' in locals(): conn.close()
+    return RedirectResponse(url=f"/customer-rates-page?user={username}&msg={msg}", status_code=303)
+
+# ================= 4. หน้าบันทึกโพย POS (/portal) =================
 PORTAL_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -418,7 +518,6 @@ PORTAL_TEMPLATE = """
             }, 1000);
         }
 
-        // ฟังก์ชันคำนวณเลขด่วน
         function apply6Box() {
             let num = document.getElementById('mainNumInput').value.trim();
             if (num.length !== 3) { alert("กรุณากรอกตัวเลข 3 หลัก"); return; }
@@ -454,7 +553,6 @@ PORTAL_TEMPLATE = """
             updatePreview(doors.join(','));
         }
 
-        // อัปเดตกล่อง Preview
         function updatePreview(nums) {
             let topAmt = document.getElementById('topAmtInput').value || '0';
             let botAmt = document.getElementById('botAmtInput').value || '0';
@@ -463,7 +561,7 @@ PORTAL_TEMPLATE = """
         }
 
         function refreshPreviewOnInput() {
-            document.getElementById('hiddenGeneratedNums').value = ""; // เคลียร์เลขที่รูดไว้เมื่อผู้ใช้พิมพ์ใหม่
+            document.getElementById('hiddenGeneratedNums').value = "";
             let num = document.getElementById('mainNumInput').value;
             let topAmt = document.getElementById('topAmtInput').value || '0';
             let botAmt = document.getElementById('botAmtInput').value || '0';
@@ -473,7 +571,6 @@ PORTAL_TEMPLATE = """
 </head>
 <body onload="startCountdown('{{ close_time }}')">
     <div class="main-container" style="width: 100%;">
-        <!-- Sidebar ซ้าย: เลือกรายชื่อลูกค้า/สายงาน + อัตราจ่าย + เมนูด่วน 5 รายการ -->
         <div class="sidebar-left">
             <div class="p-2 bg-dark border border-secondary mb-3 rounded">
                 <div class="fw-bold text-warning small mb-1">ข้อมูลผู้ใช้งาน</div>
@@ -498,7 +595,6 @@ PORTAL_TEMPLATE = """
                 <div class="small fw-bold text-info mb-1">อัตราจ่าย: {{ market }}</div>
                 <div class="extra-small text-warning mb-1" style="font-size:0.75rem;">({{ current_customer_name }})</div>
                 
-                <!-- [✅ ส่วนที่ได้รับการแก้ไข: เพิ่ม if has_rate ป้องกันบั๊ก 'else' ใน Jinja2] -->
                 {% if has_rate %}
                 <table class="table table-bordered rate-table text-center">
                     <thead><tr><th>ประเภท</th><th>รางวัล</th><th>ส่วนลด</th></tr></thead>
@@ -522,7 +618,6 @@ PORTAL_TEMPLATE = """
             <a href="/agent-reports?user={{ username }}" class="menu-item text-success">5. 📊 รายงานผล & สรุปยอด</a>
         </div>
 
-        <!-- Content ตรงกลาง: คีย์โพย -->
         <div class="content-center">
             <div id="sticky-timer" class="sticky-timer">⏳ กำลังคำนวณเวลา...</div>
 
@@ -620,7 +715,6 @@ PORTAL_TEMPLATE = """
             {% endif %}
         </div>
         
-        <!-- Sidebar ขวา: เลขอั้นข้อมูลดิบ 3 กรอบ -->
         <div class="sidebar-right">
             <h6 class="text-center fw-bold text-danger mb-3">🚫 รายการเลขอั้นประจำงวด</h6>
             
@@ -670,11 +764,11 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None, erro
                 current_customer_name = cust[1]
                 break
 
-        # ตรวจสอบเรต
         has_rate = False
         user_rates = {"pay_3d": 500.0, "pay_3tod": 100.0, "pay_2d": 70.0, "pay_run_top": 3.2, "pay_run_bot": 4.2, "disc_total": 0.0, "disc_3d": 0.0, "disc_2d": 0.0, "disc_run": 0.0}
         
-        c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM CustomerLottoRates WHERE target_id=%s AND lotto_name=%s", (str(customer_id), market))
+        # ดึงเรตล่าสุดแยกตามหวยและลูกค้า
+        c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM CustomerLottoRates WHERE target_id=%s AND lotto_name=%s ORDER BY id DESC LIMIT 1", (str(customer_id), market))
         specific_rate = c.fetchone()
         
         if specific_rate:
@@ -719,7 +813,6 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None, erro
     finally:
         if 'conn' in locals(): conn.close()
 
-# ================= API รับคีย์โพย (รองรับ บน/ล่าง, ปุ่มด่วน และคำนวณเรตออโต้) =================
 @app.post("/portal-add-draft")
 def portal_add_draft(
     user: str = Form(...), market: str = Form(...), draw: str = Form(...), 
@@ -731,15 +824,13 @@ def portal_add_draft(
         conn = connect_db()
         c = conn.cursor()
         
-        # ตรวจสอบว่ามีการกดปุ่มด่วนมาหรือไม่ (ถ้ามีใช้ generated_nums, ถ้าไม่มีใช้ที่พิมพ์ในช่อง)
         target_nums_str = generated_nums if generated_nums.strip() != "" else num_input
         nums_list = [n.strip() for n in target_nums_str.split(",") if n.strip()]
         
         if not nums_list:
             return RedirectResponse(url=f"/portal?user={user}&market={market}&draw={draw}&customer_id={customer_id}&error_msg=กรุณากรอกตัวเลข", status_code=303)
 
-        # 1. ดึงเรตลูกค้า
-        c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM CustomerLottoRates WHERE target_id=%s AND lotto_name=%s", (customer_id, market))
+        c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM CustomerLottoRates WHERE target_id=%s AND lotto_name=%s ORDER BY id DESC LIMIT 1", (customer_id, market))
         rate = c.fetchone()
         if not rate: 
             if customer_id.startswith("user_"):
@@ -750,7 +841,6 @@ def portal_add_draft(
 
         if not rate: rate = (500, 100, 70, 3.2, 4.2, 0, 0, 0, 0)
         
-        # ฟังก์ชันย่อยสำหรับบันทึกลง DB
         def insert_draft(play_type, num_val, amt, payout, discount_percent):
             net = amt - (amt * (discount_percent / 100))
             c.execute("""
@@ -758,19 +848,16 @@ def portal_add_draft(
                 VALUES (%s, %s, 'Customer', %s, %s, %s, %s, %s, %s, 'ปกติ')
             """, (user, customer_id, num_val, amt, play_type, payout, discount_percent, net))
 
-        # 2. วนลูปบันทึกทีละตัวเลขจากที่สร้างมาได้
         for num in nums_list:
             num_len = len(num)
             if num_len not in [1, 2, 3]:
-                continue # ข้ามตัวเลขที่ไม่ตรงเงื่อนไข
+                continue
                 
-            # บันทึกยอด 'บน' (Top)
             if top_amt > 0:
                 if num_len == 3: insert_draft("3ตัวตรง", num, top_amt, rate[0], rate[5] if rate[5] > 0 else rate[8])
                 elif num_len == 2: insert_draft("2ตัวบน", num, top_amt, rate[2], rate[6] if rate[6] > 0 else rate[8])
                 elif num_len == 1: insert_draft("วิ่งบน", num, top_amt, rate[3], rate[7] if rate[7] > 0 else rate[8])
 
-            # บันทึกยอด 'ล่าง' (Bot)
             if bot_amt > 0:
                 if num_len == 3: insert_draft("3ตัวโต๊ด", num, bot_amt, rate[1], rate[5] if rate[5] > 0 else rate[8])
                 elif num_len == 2: insert_draft("2ตัวล่าง", num, bot_amt, rate[2], rate[6] if rate[6] > 0 else rate[8])
@@ -784,7 +871,6 @@ def portal_add_draft(
         
     return RedirectResponse(url=f"/portal?user={user}&market={market}&draw={draw}&customer_id={customer_id}", status_code=303)
 
-# ================= [✅ สร้างใหม่] API ล้างรายการ (Clear Draft) =================
 @app.get("/portal-clear-draft")
 def portal_clear_draft(user: str, market: str, draw: str, customer_id: str):
     try:
@@ -798,12 +884,9 @@ def portal_clear_draft(user: str, market: str, draw: str, customer_id: str):
         if 'conn' in locals(): conn.close()
     return RedirectResponse(url=f"/portal?user={user}&market={market}&draw={draw}&customer_id={customer_id}", status_code=303)
 
-# ================= [✅ สร้างใหม่] API ยืนยันโพยออกบิล =================
 @app.post("/portal-confirm-bill")
 def portal_confirm_bill(user: str = Form(...), market: str = Form(...), draw: str = Form(...), customer_id: str = Form(...)):
     try:
-        # ระบบจริงจะต้องย้ายข้อมูลจาก TempDraft ไปยังตารางบิลถาวร (เช่น Bills, Tickets)
-        # ในที่นี้ ทำการลบออกจาก TempDraft ถือว่าบิลสำเร็จ
         conn = connect_db()
         c = conn.cursor()
         c.execute("DELETE FROM TempDraft WHERE username=%s AND customer_id=%s", (user, customer_id))
@@ -813,12 +896,6 @@ def portal_confirm_bill(user: str = Form(...), market: str = Form(...), draw: st
     finally:
         if 'conn' in locals(): conn.close()
     return RedirectResponse(url=f"/portal?user={user}&market={market}&draw={draw}&customer_id={customer_id}&error_msg=ออกบิลสำเร็จเรียบร้อย!", status_code=303)
-
-
-# --- เมนูด่วนอื่นๆ (โค้ดเดิมของคุณที่ทำงานได้ปกติ) ---
-# ...
-# [หมายเหตุ: นำโค้ดหน้าจัดการผู้ใช้ (admin-users), จัดการลูกค้า, หน้าเรต และรายงานผลต่อท้ายได้เลย โค้ดส่วนนั้นไม่มีปัญหาและทำงานได้ดีครับ]
-# ...
 
 @app.get("/admin-campaigns", response_class=HTMLResponse)
 def admin_campaigns(user: str):
