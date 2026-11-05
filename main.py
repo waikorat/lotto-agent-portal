@@ -382,7 +382,12 @@ PORTAL_TEMPLATE = """
     """ + UNIFIED_LAYOUT + """
     <style>
         .market-banner { background-color: #dc3545; color: white; padding: 10px 15px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-weight: bold; margin-bottom: 15px; }
+        .quick-btn-group { display: flex; gap: 10px; margin-bottom: 10px; }
         .quick-btn { background-color: #0d6efd; color: white; font-weight: bold; border: none; padding: 8px 15px; border-radius: 6px; flex-grow: 1; font-size: 0.9rem; }
+        .preview-box { background-color: #ccfeff; border: 2px solid #0dcaf0; padding: 10px; border-radius: 6px; font-family: monospace; font-weight: bold; font-size: 1.05rem; color: #000; margin-bottom: 12px; min-height: 45px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; }
+        .entry-form-box { background-color: rgba(255,255,255,0.8); padding: 10px; border-radius: 6px; margin-bottom: 15px; border: 1px solid #ccc; }
+        .sidebar-right { width: 320px; background-color: rgba(255,255,255,0.4); border-left: 2px solid #d4af37; padding: 15px; flex-shrink: 0; overflow-y: auto; }
+        .recent-table th, .recent-table td { font-size: 0.75rem; padding: 4px !important; text-align: center; }
         .rate-table th, .rate-table td { font-size: 0.78rem; padding: 4px !important; color: white; background-color: #1a1a1a !important; border-color: #444 !important; }
         .menu-title { color: #fff; font-weight: bold; font-size: 0.88rem; margin-top: 15px; margin-bottom: 6px; border-bottom: 1px solid #444; padding-bottom: 3px; }
         .menu-item { display: block; color: #ccc; text-decoration: none; padding: 5px 8px; font-size: 0.83rem; margin-bottom: 3px; border-radius: 4px; }
@@ -408,8 +413,58 @@ PORTAL_TEMPLATE = """
                     el.innerText = `⏳ เหลือเวลา: ${hours}ช. ${minutes}น. ${seconds}ว.`;
                 }
             }, 1000);
+            function apply6Box() {
+            let num = document.getElementById('mainNumInput').value.trim();
+            if (num.length !== 3) { alert("กรุณากรอกตัวเลข 3 หลัก"); return; }
+            let perms = new Set(); let arr = num.split('');
+            function permute(a, l, r) {
+                if (l === r) { perms.add(a.join('')); }
+                else { for (let i = l; i <= r; i++) { [a[l], a[i]] = [a[i], a[l]]; permute(a, l+1, r); [a[l], a[i]] = [a[i], a[l]]; } }
+            }
+            permute(arr, 0, arr.length - 1);
+            updatePreview(Array.from(perms).join(','));
+        }
+        function apply19Door() {
+            let digit = document.getElementById('mainNumInput').value.trim();
+            if (digit.length !== 1) { alert("กรุณากรอกตัวเลข 1 หลัก"); return; }
+            let doors = [];
+            for (let i = 0; i <= 9; i++) {
+                let n1 = digit + i, n2 = i + digit;
+                if (!doors.includes(n1)) doors.push(n1);
+                if (!doors.includes(n2)) doors.push(n2);
+            }
+            updatePreview(doors.join(','));
+        }
+        function applyFrontRoot() {
+            let digit = document.getElementById('mainNumInput').value.trim();
+            if (digit.length !== 1) { alert("กรุณากรอกตัวเลข 1 หลัก"); return; }
+            let doors = []; for (let i = 0; i <= 9; i++) { doors.push(digit + i); }
+            updatePreview(doors.join(','));
+        }
+        function applyBackRoot() {
+            let digit = document.getElementById('mainNumInput').value.trim();
+            if (digit.length !== 1) { alert("กรุณากรอกตัวเลข 1 หลัก"); return; }
+            let doors = []; for (let i = 0; i <= 9; i++) { doors.push(i + digit); }
+            updatePreview(doors.join(','));
+        }
+        function updatePreview(nums) {
+            let topAmt = document.getElementById('topAmtInput').value || '0';
+            let botAmt = document.getElementById('botAmtInput').value || '0';
+            document.getElementById('previewContent').innerHTML = `<span>${nums}</span> = <span class="badge bg-white text-dark border px-2">${topAmt}</span> * <span class="badge bg-white text-dark border px-2">${botAmt}</span>`;
+            document.getElementById('hiddenGeneratedNums').value = nums;
+        }
+        function refreshPreviewOnInput() {
+            let hiddenNums = document.getElementById('hiddenGeneratedNums').value;
+            if(hiddenNums) { updatePreview(hiddenNums); }
+            else {
+                let num = document.getElementById('mainNumInput').value;
+                let topAmt = document.getElementById('topAmtInput').value || '0';
+                let botAmt = document.getElementById('botAmtInput').value || '0';
+                document.getElementById('previewContent').innerHTML = `<span>${num}</span> = <span class="badge bg-white text-dark border px-2">${topAmt}</span> * <span class="badge bg-white text-dark border px-2">${botAmt}</span>`;
+            }
         }
     </script>
+
 </head>
 <body onload="startCountdown('{{ close_time }}')">
     <div class="main-container" style="width: 100%;">
@@ -446,6 +501,9 @@ PORTAL_TEMPLATE = """
                         <tr><td>วิ่งบน/ล่าง</td><td>{{ rates.pay_run_top }}/{{ rates.pay_run_bot }}</td><td>{{ rates.disc_run if rates.disc_run > 0 else rates.disc_total }}%</td></tr>
                     </tbody>
                 </table>
+                {% else %}
+                <div class="alert alert-warning py-2 small text-center">ยังไม่ได้ตั้งค่าเรต</div>
+                {% endif %}
             </div>
 
             <div class="menu-title">เมนูด่วน</div>
@@ -464,6 +522,18 @@ PORTAL_TEMPLATE = """
                 <div>🎟️ {{ market }} (งวด {{ draw_date }})</div>
                 <div class="text-warning small">ผู้ซื้อ: {{ current_customer_name }}</div>
             </div>
+            
+             {% if error_msg %}
+            <div class="alert alert-danger fw-bold text-center">❌ {{ error_msg }}</div>
+            {% endif %}
+
+            {% if not has_rate %}
+            <div class="alert alert-danger shadow p-4 text-center bg-white border border-danger border-2">
+                <h4 class="text-danger fw-bold mb-3"><i class="fa-solid fa-triangle-exclamation"></i> ยังไม่ได้ตั้งค่าเรตอัตราจ่ายของลูกค้ารายนี้</h4>
+                <p class="text-dark mb-4">ลูกค้ารายนี้ยังไม่มีการกำหนดอัตราจ่ายและส่วนลดสำหรับหวย <b>{{ market }}</b></p>
+                <a href="/customer-rates-page?user={{ username }}" class="btn btn-danger btn-lg fw-bold px-5">⚙️ ไปหน้ากำหนดเรตลูกค้าแยกตามหวย ➡️</a>
+            </div>
+            {% else %}
 
             <div class="quick-btn-group d-flex gap-2 mb-3">
                 <button type="button" class="quick-btn" onclick="alert('ฟังก์ชัน 6กลับ')">6กลับ</button>
@@ -472,17 +542,33 @@ PORTAL_TEMPLATE = """
                 <button type="button" class="quick-btn" onclick="alert('รูดหลัง')">รูดหลัง</button>
             </div>
 
+            <div class="preview-box" id="previewContent">
+                <span class="text-muted small">preview:- (เลือกฟังก์ชันคีย์ด่วน หรือพิมพ์เลขในฟอร์มด้านล่าง)</span>
+            </div>
+
             <form method="POST" action="/portal-add-draft" class="p-3 bg-white rounded shadow-sm border mb-3">
                 <input type="hidden" name="user" value="{{ username }}">
                 <input type="hidden" name="market" value="{{ market }}">
                 <input type="hidden" name="draw" value="{{ draw_date }}">
                 <input type="hidden" name="customer_id" value="{{ customer_id }}">
                 <div class="row g-2 align-items-center">
-                    <div class="col-md-4"><label class="small fw-bold">ตัวเลข</label><input type="text" name="num_input" class="form-control" placeholder="พิมพ์เลข..." required autofocus></div>
-                    <div class="col-md-4"><label class="small fw-bold">บน / 3ตัวตรง</label><input type="number" step="any" name="top_amt" class="form-control" placeholder="จำนวนเงิน"></div>
-                    <div class="col-md-4"><label class="small fw-bold">ล่าง / 3ตัวโต๊ด</label><input type="number" step="any" name="bot_amt" class="form-control" placeholder="จำนวนเงิน"></div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold mb-1">ตัวเลข</label>
+                        <input type="text" id="mainNumInput" name="num_input" class="form-control" placeholder="พิมพ์เลข..." oninput="refreshPreviewOnInput()" required autofocus>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold mb-1">บน / 3ตัวตรง</label>
+                        <input type="number" step="any" id="topAmtInput" name="top_amt" class="form-control" placeholder="จำนวนเงิน" oninput="refreshPreviewOnInput()">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label small fw-bold mb-1">ล่าง / 3ตัวโต๊ด</label>
+                        <input type="number" step="any" id="botAmtInput" name="bot_amt" class="form-control" placeholder="จำนวนเงิน" oninput="refreshPreviewOnInput()">
+                    </div>
                 </div>
-                <button type="submit" class="btn btn-primary btn-sm fw-bold mt-3 px-4">➕ เพิ่มรายการคีย์โพย</button>
+                <div class="d-flex gap-2 mt-2">
+                    <button type="reset" class="btn btn-danger btn-sm fw-bold px-4">ยกเลิก</button>
+                    <button type="submit" class="btn btn-primary btn-sm fw-bold px-4">เพิ่มรายการ</button>
+                </div>
             </form>
 
             <div class="card shadow-sm p-3 bg-white">
@@ -512,6 +598,19 @@ PORTAL_TEMPLATE = """
             </div>
         </div>
 
+        <div class="d-flex gap-2 mt-3">
+                    <form method="POST" action="/portal-confirm-bill" class="flex-grow-1">
+                        <input type="hidden" name="user" value="{{ username }}">
+                        <input type="hidden" name="market" value="{{ market }}">
+                        <input type="hidden" name="draw" value="{{ draw_date }}">
+                        <input type="hidden" name="customer_id" value="{{ customer_id }}">
+                        <button type="submit" class="btn btn-primary w-100 fw-bold" {% if not has_rate or not drafts %}disabled{% endif %}>ยืนยันโพย & ออกบิล</button>
+                    </form>
+                    <a href="/portal-clear-draft?user={{ username }}&market={{ market }}&draw={{ draw_date }}&customer_id={{ customer_id }}" class="btn btn-danger fw-bold px-4" onclick="return confirm('ยืนยันล้างรายการ?')">ล้างรายการ</a>
+                </div>
+            </div>
+        </div>
+        
         <!-- Sidebar ขวา: เลขอั้นข้อมูลดิบ 3 กรอบ -->
         <div class="sidebar-right">
             <h6 class="text-center fw-bold text-danger mb-3">🚫 รายการเลขอั้นประจำงวด</h6>
