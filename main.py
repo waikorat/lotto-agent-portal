@@ -8,7 +8,6 @@ import os
 
 app = FastAPI(title="LuckyNumber Agent Portal - Enterprise Unified")
 
-# ตรวจสอบและสร้างโฟลเดอร์ static อัตโนมัติหากยังไม่มี
 if not os.path.exists("static"):
     os.makedirs("static")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -21,7 +20,6 @@ def connect_db():
 def get_thai_time():
     return datetime.utcnow() + timedelta(hours=7)
 
-# --- Startup Migration ---
 @app.on_event("startup")
 def startup_agent_db():
     try:
@@ -139,7 +137,6 @@ def startup_agent_db():
     finally:
         if 'conn' in locals(): conn.close()
 
-# ================= Helper Functions =================
 def get_lotto_logo(lotto_name):
     name = lotto_name.lower()
     if "ลาวพัฒนา" in name: return "/static/ลาวพัฒนาโลโก้.png"
@@ -183,7 +180,6 @@ def get_blocked_display_data(draw_date):
     finally:
         if 'conn' in locals(): conn.close()
 
-# ================= UNIFIED LAYOUT =================
 UNIFIED_LAYOUT = """
 <style>
     * { box-sizing: border-box; }
@@ -235,7 +231,6 @@ UNIFIED_LAYOUT = """
 </div>
 """
 
-# ================= 1. LOGIN =================
 LOGIN_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -287,7 +282,6 @@ def login_action(username: str = Form(...), password: str = Form(...)):
     finally:
         if 'conn' in locals(): conn.close()
 
-# ================= 2. หน้าเลือกงวดหวย (/select-market) =================
 SELECT_MARKET_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -366,7 +360,6 @@ def select_market(user: str):
         
     return Template(SELECT_MARKET_TEMPLATE).render(username=user, role=role, categories=categories)
 
-# ================= 3. หน้าตั้งค่าเรตลูกค้าแยกตามหวย (/customer-rates-page) =================
 CUSTOMER_RATES_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -474,7 +467,6 @@ def save_lotto_rate(
         if 'conn' in locals(): conn.close()
     return RedirectResponse(url=f"/customer-rates-page?user={username}&msg={msg}", status_code=303)
 
-# ================= 4. หน้าบันทึกโพย POS (/portal) =================
 PORTAL_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="th">
@@ -767,7 +759,7 @@ def portal_page(user: str, market: str, draw: str, customer_id: str = None, erro
         has_rate = False
         user_rates = {"pay_3d": 500.0, "pay_3tod": 100.0, "pay_2d": 70.0, "pay_run_top": 3.2, "pay_run_bot": 4.2, "disc_total": 0.0, "disc_3d": 0.0, "disc_2d": 0.0, "disc_run": 0.0}
         
-        # ดึงเรตล่าสุดแยกตามหวยและลูกค้า
+        # ดึงเรตล่าสุดจากตาราง CustomerLottoRates แยกตาม target_id และ lotto_name
         c.execute("SELECT pay_3d, pay_3tod, pay_2d, pay_run_top, pay_run_bot, disc_3d, disc_2d, disc_run, disc_total FROM CustomerLottoRates WHERE target_id=%s AND lotto_name=%s ORDER BY id DESC LIMIT 1", (str(customer_id), market))
         specific_rate = c.fetchone()
         
