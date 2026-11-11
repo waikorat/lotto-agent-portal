@@ -141,19 +141,20 @@ def _sign(data):
 
 def make_session(username):
     payload = f"{username}|{int(time.time()) + SESSION_TTL}"
-    b = base64.urlsafe_b64encode(payload.encode()).decode()
+    b = base64.urlsafe_b64encode(payload.encode()).decode().rstrip("=")   # ไม่ใส่ "=" ท้ายค่า เพราะทำให้เบราว์เซอร์/เซิร์ฟเวอร์ครอบคุกกี้ด้วยเครื่องหมายคำพูด
     return f"{b}.{_sign(b)}"
 
 
 def read_session(value):
     """คืน username ถ้า cookie ถูกต้องและยังไม่หมดอายุ"""
+    value = (value or "").strip().strip('"')
     if not value or "." not in value:
         return None
     b, sig = value.rsplit(".", 1)
     if not hmac.compare_digest(sig, _sign(b)):
         return None
     try:
-        username, exp = base64.urlsafe_b64decode(b.encode()).decode().rsplit("|", 1)
+        username, exp = base64.urlsafe_b64decode((b + "=" * (-len(b) % 4)).encode()).decode().rsplit("|", 1)
         if int(exp) < time.time():
             return None
         return username
@@ -206,7 +207,7 @@ def get_rates(c, customer_id, lotto_name):
     ดึงเรตจุดเดียวสำหรับทุกระบบ
     ลำดับ: เรตแยกหวย (CustomerLottoRates.target_id) -> เรตพื้นฐานของ Users/Customers
     คืน (dict, source) โดย source = 'lotto' | 'default' หรือ (None, None) ถ้าไม่พบผู้ใช้/ลูกค้า
-    ใช้ "is not None" แทน "or" เพื่อให้ค่า 0 ที่ตั้งใจไว้ใช้งานได้จริง
+    ส่วนลด 0 ใช้ค่า 0 จริง ส่วนอัตราจ่ายที่เป็น 0/ว่าง ใช้ค่าเริ่มต้น
     """
     cols = ", ".join(RATE_KEYS)
     c.execute(
@@ -221,7 +222,13 @@ def get_rates(c, customer_id, lotto_name):
         row, source = c.fetchone(), "default"
     if not row:
         return None, None
-    return {k: (float(v) if v is not None else RATE_DEFAULTS[k]) for k, v in zip(RATE_KEYS, row)}, source
+    out = {}
+    for k, v in zip(RATE_KEYS, row):
+        if v is None or (k.startswith("pay_") and float(v) <= 0):
+            out[k] = RATE_DEFAULTS[k]      # อัตราจ่าย 0 ไม่มีความหมาย (ข้อมูลเก่าเก็บ 0 แทนค่าว่าง) -> ใช้ค่าเริ่มต้น
+        else:
+            out[k] = float(v)              # ส่วนลด 0 = ไม่มีส่วนลด ใช้ค่า 0 จริง
+    return out, source
 
 
 def disc_pct(r, kind):
@@ -549,7 +556,7 @@ MIGRATIONS = [
     "username TEXT, customer_id INTEGER, customer_name TEXT, customer_type TEXT, bill_no TEXT, num TEXT, "
     "type TEXT, amount NUMERIC DEFAULT 0, status TEXT, discount NUMERIC DEFAULT 0, net NUMERIC DEFAULT 0, "
     "payout_rate NUMERIC DEFAULT 0, lotto_name TEXT)",
-    "CREATE TABLE IF NOT EXISTS DrawResults (id SERIAL PRIMARY KEY, draw_date TEXT, prize_1 TEXT, bottom_2 TEXT)",
+    "CREATE TABLE IF NOT EXISTS DrawResults (id SERIAL PRIMARY KEY, draw_date TEXT UNIQUE, prize_1 TEXT, bottom_2 TEXT)",
     "CREATE TABLE IF NOT EXISTS AgentSettlements (id SERIAL PRIMARY KEY, agent_username VARCHAR(100), "
     "target_name VARCHAR(100), amount NUMERIC(12,2), settle_type VARCHAR(20), note TEXT, timestamp TEXT)",
     # เรตแยกหวย: คีย์มาตรฐานคือ target_id ("12" = ลูกค้า, "user_5" = ผู้ใช้); เก็บ customer_id ไว้ให้ระบบหลักเดิมยังทำงานได้
@@ -604,6 +611,9 @@ MIGRATIONS = [
     "DELETE FROM CustomerLottoRates a USING CustomerLottoRates b "
     "WHERE a.id < b.id AND a.target_id = b.target_id AND a.lotto_name = b.lotto_name",
     "CREATE UNIQUE INDEX IF NOT EXISTS ux_rates_target_lotto ON CustomerLottoRates(target_id, lotto_name)",
+
+    # ---- DrawResults: ระบบหลักใช้ ON CONFLICT (draw_date) จึงต้องมี unique ----
+    "CREATE UNIQUE INDEX IF NOT EXISTS ux_drawresults_date ON DrawResults(draw_date)",
 ]
 
 
