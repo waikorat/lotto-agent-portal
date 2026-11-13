@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import DictLoader, Environment
 
@@ -115,6 +115,7 @@ BASE = """<!DOCTYPE html>
     <div class="top-nav-menu">
       <a href="/select-market">บันทึกโพย</a>
       <a href="/agent-reports">รายงานผล</a>
+      {% if user.role == 'Admin' %}<a href="/live-sales" class="text-info">📈 ยอดขายสด</a>{% endif %}
       {% if user.role in ['Admin','Master Agent','Agent'] %}
       <a href="/admin-users">จัดการผู้ใช้</a>
       <a href="/manage-customers">จัดการลูกค้า</a>
@@ -157,6 +158,15 @@ MACROS = """
 {% endmacro %}
 """
 
+LIVE_SALES = """{% extends "base.html" %}
+{% block title %}ยอดขายเรียลไทม์{% endblock %}
+{% block body %}
+<div class="container-fluid my-3 px-4">
+  <h3 class="fw-bold text-primary mb-3">📈 ยอดขายเรียลไทม์</h3>
+  {{ inner|safe }}
+</div>
+{% endblock %}"""
+
 LOGIN = """{% extends "base.html" %}
 {% block head %}<style>body{height:100vh;display:flex;align-items:center;justify-content:center;flex-direction:column}
 .login-card{width:100%;max-width:400px;background:#000;border:2px solid #d4af37;padding:30px;border-radius:10px;color:#fff}
@@ -175,42 +185,12 @@ LOGIN = """{% extends "base.html" %}
 {% endblock %}"""
 
 SELECT_MARKET = """{% extends "base.html" %}
-{% block title %}เลือกตลาดหวย{% endblock %}
-{% block head %}<style>
- .market-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:15px}
- .market-card{display:flex;align-items:center;padding:15px;border-radius:12px;background:#fff;box-shadow:0 4px 6px rgba(0,0,0,.1);
-   border-left:6px solid #d4af37;text-decoration:none;color:inherit;transition:transform .2s}
- .market-card:hover{transform:translateY(-4px)}
- .market-logo{width:55px;height:55px;object-fit:contain;border-radius:50%;margin-right:15px;background:#f8f9fa;padding:3px;border:1px solid #ccc}
- .market-info{flex-grow:1;overflow:hidden}.market-title{font-weight:bold;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
- .market-meta{font-size:.8rem;color:#666}
- .category-header{font-weight:bold;color:#dc3545;border-bottom:2px solid #dc3545;padding-bottom:5px;margin:25px 0 15px;font-size:1.2rem}
-</style>{% endblock %}
+{% block title %}เลือกงวดหวย{% endblock %}
 {% block body %}
 <div class="container-fluid my-4 px-4">
-  <h3 class="fw-bold mb-1 text-primary">📌 ตลาดหวยที่เปิดรับแทง</h3>
-  <p class="text-muted small">เลือกงวดหวยที่ต้องการคีย์โพย</p>
-  {% for cat, markets in categories %}
-  <h5 class="category-header">🎯 หมวดหมู่: {{ cat }}</h5>
-  <div class="market-grid">
-    {% for m in markets %}
-    <a href="/portal?campaign_id={{ m.id }}" class="market-card">
-      <img src="{{ m.logo }}" class="market-logo" alt="logo" onerror="this.src='{{ default_logo }}'">
-      <div class="market-info">
-        <div class="market-title">{{ m.name }}</div>
-        <div class="market-meta">งวด: <b>{{ m.draw }}</b></div>
-        <div class="market-meta">ปิดรับ: <span class="text-danger fw-bold">{{ m.close|replace('T',' ') if m.close else '-' }}</span></div>
-      </div>
-      <div class="ms-2 text-end">
-        {% if m.closed %}<span class="badge bg-secondary">ปิดรับแล้ว</span>{% else %}<span class="badge bg-success">เปิดรับแทง</span>{% endif %}
-        <div class="text-primary fw-bold mt-1" style="font-size:.75rem;">คีย์โพย ➡️</div>
-      </div>
-    </a>
-    {% endfor %}
-  </div>
-  {% else %}
-  <div class="alert alert-warning text-center mt-4 fw-bold">ยังไม่มีตลาดหวยที่เปิดอยู่ในขณะนี้</div>
-  {% endfor %}
+  <h3 class="fw-bold mb-1 text-primary">📌 เลือกงวดหวยที่ต้องการคีย์โพย</h3>
+  <p class="text-muted small">กล่องสีเขียว = เปิดรับแทง (เรียงตามเวลาที่เหลือก่อนปิดรับ น้อยที่สุดอยู่ก่อน) · กล่องสีขาว = ปิดรับแล้วหรือยังไม่ถึงเวลาเปิดรับ</p>
+  {{ cards_html|safe }}
 </div>
 {% endblock %}"""
 
@@ -265,6 +245,7 @@ PORTAL = """{% extends "base.html" %}
     {% endif %}
     <a href="/select-market" class="menu-item text-primary">🏠 กลับหน้าเลือกหวย</a>
     <a href="/agent-reports" class="menu-item text-success">📊 รายงานผล & สรุปยอด</a>
+    {% if user.role == 'Admin' %}<a href="/live-sales" class="menu-item text-info">📈 ยอดขายสด (เรียลไทม์)</a>{% endif %}
   </div>
 
   <div class="content-center">
@@ -623,7 +604,7 @@ PASSWORD = """{% extends "base.html" %}
 
 env = Environment(
     loader=DictLoader({
-        "base.html": BASE, "macros.html": MACROS, "login.html": LOGIN, "select_market.html": SELECT_MARKET,
+        "base.html": BASE, "macros.html": MACROS, "login.html": LOGIN, "live_sales.html": LIVE_SALES, "select_market.html": SELECT_MARKET,
         "portal.html": PORTAL, "bill.html": BILL, "reports.html": REPORTS, "users.html": USERS,
         "customers.html": CUSTOMERS, "rates.html": RATES, "password.html": PASSWORD,
     }),
@@ -661,6 +642,30 @@ def login_action(request: Request, username: str = Form(...), password: str = Fo
     return resp
 
 
+@app.get("/live-sales", response_class=HTMLResponse)
+def live_sales_page(request: Request):
+    with db() as conn:
+        c = conn.cursor()
+        me = get_me(c, request)
+        if not me:
+            return to_login()
+        if me["role"] != "Admin":
+            return redir("/select-market", error="เมนูนี้สำหรับแอดมินเท่านั้น")
+        inner = common.render_live_sales(c, "/live-sales-data")
+    return render(request, "live_sales.html", user=me, inner=inner)
+
+
+@app.get("/live-sales-data")
+def live_sales_data_api(request: Request, node: str = "", f: str = ""):
+    with db() as conn:
+        c = conn.cursor()
+        me = get_me(c, request)
+        if not me or me["role"] != "Admin":
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        data = common.live_sales_data(c, me["username"], node or me["username"], f)
+    return JSONResponse(data)
+
+
 @app.get("/logout")
 def logout():
     resp = redir("/login")
@@ -677,23 +682,12 @@ def select_market(request: Request):
         me = get_me(c, request)
         if not me:
             return to_login()
-        c.execute("SELECT id, lotto_name, draw_date, status, close_time FROM LotteryCampaigns "
-                  "WHERE status='Active' ORDER BY id DESC")
-        rows = c.fetchall()
-    cats = {k: [] for k in common.CATEGORY_ORDER}
-    for cid, name, draw, st, ct in rows:
-        s = common.seconds_until(ct)
-        cats[common.categorize(name)].append({
-            "id": cid, "name": name or "", "draw": draw, "close": ct, "logo": common.get_lotto_logo(name),
-            "closed": s is not None and s <= 0})
-    categories = [(k, v) for k, v in cats.items() if v]
-    return render(request, "select_market.html", user=me, categories=categories, default_logo=common.DEFAULT_LOGO)
-
-
-# ============================================================ หน้าคีย์โพย
-
-def _draft_filter():
-    return "username=%s AND customer_id=%s AND customer_type=%s AND lotto_name=%s AND draw_date=%s"
+        c.execute("SELECT id, lotto_name, draw_date, status, open_time, close_time, result_timestamp FROM LotteryCampaigns "
+                  "ORDER BY id DESC LIMIT 300")
+        rows = [dict(id=r[0], lotto_name=r[1], draw_date=r[2], status=r[3], open_time=r[4], close_time=r[5],
+                     result_timestamp=r[6]) for r in c.fetchall()]
+    cards_html = common.render_campaign_cards(rows, lambda r: f"/portal?campaign_id={r['id']}", show_old_toggle=True)
+    return render(request, "select_market.html", user=me, cards_html=cards_html)
 
 
 @app.get("/portal", response_class=HTMLResponse)
@@ -991,11 +985,9 @@ def admin_users_page(request: Request, edit_id: int = None):
             return to_login()
         if not is_manager(me):
             return redir("/select-market", error="บัญชีของคุณไม่มีสิทธิ์จัดการผู้ใช้")
-        if me["role"] == "Admin":
-            c.execute(f"SELECT {_USER_COLS} FROM Users WHERE id<>%s ORDER BY id DESC", (me["id"],))
-        else:
-            c.execute(f"SELECT {_USER_COLS} FROM Users WHERE LOWER(parent_user)=LOWER(%s) ORDER BY id DESC",
-                      (me["username"],))
+        # แสดง/แก้ไขเฉพาะผู้ใช้ที่ตัวเองเป็น upline โดยตรง (ทุกบทบาท รวมแอดมิน) — ลูกข่ายชั้นลึกลงไปเป็นหน้าที่ upline ของเขา
+        c.execute(f"SELECT {_USER_COLS} FROM Users WHERE LOWER(parent_user)=LOWER(%s) AND id<>%s ORDER BY id DESC",
+                  (me["username"], me["id"]))
         users_list = c.fetchall()
         edit_user = None
         if edit_id:
@@ -1027,6 +1019,9 @@ def admin_users_create(request: Request, new_username: str = Form(...), new_pass
         if c.fetchone():
             return redir("/admin-users", error="มี Username นี้อยู่แล้ว")
         v = rf.values
+        over = common.check_rates_within(c, me, v)
+        if over:
+            return redir("/admin-users", error=over)
         c.execute(f"INSERT INTO Users (username, password, role, parent_user, {', '.join(RATE_KEYS)}) "
                   f"VALUES (%s,%s,%s,%s,{', '.join(['%s'] * len(RATE_KEYS))})",
                   (new_username, common.store_password(new_password), new_role, me["username"], *[v[k] for k in RATE_KEYS]))
@@ -1043,10 +1038,13 @@ def admin_users_update(request: Request, user_id: int = Form(...), new_password:
             return to_login()
         c.execute("SELECT username, parent_user FROM Users WHERE id=%s", (user_id,))
         t = c.fetchone()
-        allowed = t and (me["role"] == "Admin" or (t[1] or "").lower() == me["username"].lower())
+        allowed = t and user_id != me["id"] and (t[1] or "").lower() == me["username"].lower()
         if not allowed or not is_manager(me):
-            return redir("/admin-users", error="คุณไม่มีสิทธิ์แก้ไขผู้ใช้รายนี้")
+            return redir("/admin-users", error="แก้ไขได้เฉพาะผู้ใช้ที่คุณเป็น upline โดยตรง (ไม่สามารถแก้เรตของตัวเองได้)")
         v = rf.values
+        over = common.check_rates_within(c, me, v)
+        if over:
+            return redir("/admin-users", edit_id=user_id, error=over)
         sets = ", ".join(f"{k}=%s" for k in RATE_KEYS)
         c.execute(f"UPDATE Users SET {sets} WHERE id=%s", (*[v[k] for k in RATE_KEYS], user_id))
         if new_password:
@@ -1071,11 +1069,8 @@ def manage_customers_page(request: Request, edit_id: int = None):
             return to_login()
         if not is_manager(me):
             return redir("/select-market", error="บัญชีของคุณไม่มีสิทธิ์จัดการลูกค้า")
-        if me["role"] == "Admin":
-            c.execute(f"SELECT {_CUST_COLS} FROM Customers ORDER BY id DESC")
-        else:
-            c.execute(f"SELECT {_CUST_COLS} FROM Customers WHERE LOWER(owner_username)=LOWER(%s) ORDER BY id DESC",
-                      (me["username"],))
+        c.execute(f"SELECT {_CUST_COLS} FROM Customers WHERE LOWER(owner_username)=LOWER(%s) ORDER BY id DESC",
+                  (me["username"],))
         customers_list = c.fetchall()
         edit_customer = None
         if edit_id and any(r[0] == edit_id for r in customers_list):
@@ -1099,6 +1094,9 @@ def manage_customers_create(request: Request, name: str = Form(...), rf: RateFor
         if not name:
             return redir("/manage-customers", error="กรุณาระบุชื่อลูกค้า")
         v = rf.values
+        over = common.check_rates_within(c, me, v)
+        if over:
+            return redir("/manage-customers", error=over)
         c.execute(f"INSERT INTO Customers (name, owner_username, discount_type, {', '.join(RATE_KEYS)}) "
                   f"VALUES (%s,%s,1,{', '.join(['%s'] * len(RATE_KEYS))})",
                   (name, me["username"], *[v[k] for k in RATE_KEYS]))
@@ -1115,12 +1113,15 @@ def manage_customers_update(request: Request, customer_id: int = Form(...), name
             return to_login()
         c.execute("SELECT owner_username FROM Customers WHERE id=%s", (customer_id,))
         r = c.fetchone()
-        if not r or not is_manager(me) or (me["role"] != "Admin" and (r[0] or "").lower() != me["username"].lower()):
-            return redir("/manage-customers", error="คุณไม่มีสิทธิ์แก้ไขลูกค้ารายนี้")
+        if not r or not is_manager(me) or (r[0] or "").lower() != me["username"].lower():
+            return redir("/manage-customers", error="แก้ไขได้เฉพาะลูกค้าที่คุณเป็นผู้สร้าง")
         name = name.strip()[:100]
         if not name:
             return redir("/manage-customers", edit_id=customer_id, error="กรุณาระบุชื่อลูกค้า")
         v = rf.values
+        over = common.check_rates_within(c, me, v)
+        if over:
+            return redir("/manage-customers", edit_id=customer_id, error=over)
         sets = ", ".join(f"{k}=%s" for k in RATE_KEYS)
         c.execute(f"UPDATE Customers SET name=%s, {sets} WHERE id=%s", (name, *[v[k] for k in RATE_KEYS], customer_id))
     return redir("/manage-customers", msg="แก้ไขลูกค้าสำเร็จ")
@@ -1137,7 +1138,7 @@ def customer_rates_page(request: Request, target_id: str = None, lotto_name: str
             return to_login()
         if not is_manager(me):
             return redir("/select-market", error="บัญชีของคุณไม่มีสิทธิ์ตั้งเรต")
-        targets = common.get_targets(c, me, include_self=(me["role"] == "Admin"))
+        targets = common.get_rate_targets(c, me)      # ลูกค้าของตัวเอง + ผู้ใช้ที่ตัวเองเป็น upline โดยตรง (ไม่รวมตัวเอง)
         label = {t["key"]: t["label"] for t in targets}
         c.execute("SELECT DISTINCT lotto_name FROM LotteryCampaigns WHERE lotto_name IS NOT NULL ORDER BY lotto_name")
         lotto_list = [r[0] for r in c.fetchall()]
@@ -1176,13 +1177,19 @@ def save_lotto_rate(request: Request, target_id: str = Form(...), lotto_name: st
             return to_login()
         if not is_manager(me):
             return redir("/select-market", error="บัญชีของคุณไม่มีสิทธิ์ตั้งเรต")
-        if target_id not in [t["key"] for t in common.get_targets(c, me, include_self=(me["role"] == "Admin"))]:
-            return redir("/customer-rates-page", error="คุณไม่มีสิทธิ์ตั้งเรตให้รายนี้")
-        lotto_name = lotto_name.strip()
+        try:
+            t_type, t_id = common.parse_target(target_id)
+        except ValueError:
+            return redir("/customer-rates-page", error="ผู้ซื้อไม่ถูกต้อง")
+        if not common.can_set_rates_for(c, me, t_type, t_id):
+            return redir("/customer-rates-page", error="ตั้งเรตได้เฉพาะลูกค้าที่คุณสร้างและผู้ใช้ที่คุณเป็น upline โดยตรง (ตั้งให้ตัวเองไม่ได้)")
+        lotto_name = common.clean_name(lotto_name)
         if not lotto_name:
             return redir("/customer-rates-page", error="กรุณาเลือกหวย")
-        t_type, t_id = common.parse_target(target_id)
         v = rf.values
+        over = common.check_rates_within(c, me, v, lotto_name)
+        if over:
+            return redir("/customer-rates-page", target_id=target_id, lotto_name=lotto_name, error=over)
         # ลบ+เพิ่มใน transaction เดียว (ถ้า INSERT พัง DELETE จะถูก rollback ให้เอง)
         c.execute("DELETE FROM CustomerLottoRates WHERE target_id=%s AND lotto_name=%s", (target_id, lotto_name))
         c.execute(f"INSERT INTO CustomerLottoRates (customer_id, target_type, target_id, lotto_name, {', '.join(RATE_KEYS)}) "
