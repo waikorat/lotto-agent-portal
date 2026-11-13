@@ -690,6 +690,12 @@ def select_market(request: Request):
     return render(request, "select_market.html", user=me, cards_html=cards_html)
 
 
+# ============================================================ หน้าคีย์โพย
+
+def _draft_filter():
+    return "username=%s AND customer_id=%s AND customer_type=%s AND lotto_name=%s AND draw_date=%s"
+
+
 @app.get("/portal", response_class=HTMLResponse)
 def portal_page(request: Request, campaign_id: int, customer_id: str = None):
     with db() as conn:
@@ -986,8 +992,8 @@ def admin_users_page(request: Request, edit_id: int = None):
         if not is_manager(me):
             return redir("/select-market", error="บัญชีของคุณไม่มีสิทธิ์จัดการผู้ใช้")
         # แสดง/แก้ไขเฉพาะผู้ใช้ที่ตัวเองเป็น upline โดยตรง (ทุกบทบาท รวมแอดมิน) — ลูกข่ายชั้นลึกลงไปเป็นหน้าที่ upline ของเขา
-        c.execute(f"SELECT {_USER_COLS} FROM Users WHERE LOWER(parent_user)=LOWER(%s) AND id<>%s ORDER BY id DESC",
-                  (me["username"], me["id"]))
+        kids = [r[0] for r in common.direct_children(c, me)]
+        c.execute(f"SELECT {_USER_COLS} FROM Users WHERE id = ANY(%s) ORDER BY id DESC", (kids,))
         users_list = c.fetchall()
         edit_user = None
         if edit_id:
@@ -1038,7 +1044,7 @@ def admin_users_update(request: Request, user_id: int = Form(...), new_password:
             return to_login()
         c.execute("SELECT username, parent_user FROM Users WHERE id=%s", (user_id,))
         t = c.fetchone()
-        allowed = t and user_id != me["id"] and (t[1] or "").lower() == me["username"].lower()
+        allowed = t and user_id != me["id"] and common.is_direct_child(c, me, user_id)
         if not allowed or not is_manager(me):
             return redir("/admin-users", error="แก้ไขได้เฉพาะผู้ใช้ที่คุณเป็น upline โดยตรง (ไม่สามารถแก้เรตของตัวเองได้)")
         v = rf.values
