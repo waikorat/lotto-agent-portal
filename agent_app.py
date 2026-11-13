@@ -23,6 +23,7 @@ log = logging.getLogger("agent_app")
 @asynccontextmanager
 async def lifespan(_app):
     if os.environ.get("RUN_MIGRATIONS", "1") == "1":
+        print("common.py build:", common.BUILD)
         common.run_migrations()
     yield
 
