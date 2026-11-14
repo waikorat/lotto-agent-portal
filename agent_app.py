@@ -2,11 +2,13 @@
 LuckyNumber Agent Portal (ระบบตัวแทน) — ฉบับแก้ไขเต็ม
 รัน:  DB_URI=... SECRET_KEY=... uvicorn agent_app:app --host 0.0.0.0 --port 8001
 """
+import itertools
 import logging
 import os
 import re
 import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, Request
@@ -116,7 +118,15 @@ BASE = """<!DOCTYPE html>
     <div class="top-nav-menu">
       <a href="/select-market">บันทึกโพย</a>
       <a href="/agent-reports">รายงานผล</a>
-      {% if user.role == 'Admin' %}<a href="/live-sales" class="text-info">📈 ยอดขายสด</a>{% endif %}
+      {% if user.role == 'Admin' %}
+      <a href="/live-sales" class="text-info">📈 ยอดขายสด</a>
+      <a href="/campaigns" class="text-warning">📌 จัดการงวด</a>
+      <a href="/blocked-numbers">🚫 เลขอั้น</a>
+      <a href="/results">🏆 ผลรางวัล</a>
+      <a href="/audit-all">🔍 ตรวจสอบทั้งหมด</a>
+      <a href="/db-inspector">🗄️ ตรวจสอบ DB</a>
+      {% endif %}
+      {% if user.role in ['Admin','Master Agent','Agent'] %}<a href="/dashboard">📊 แดชบอร์ด</a><a href="/audit-discount">🔍 ส่วนลด</a>{% endif %}
       {% if user.role in ['Admin','Master Agent','Agent'] %}
       <a href="/admin-users">จัดการผู้ใช้</a>
       <a href="/manage-customers">จัดการลูกค้า</a>
@@ -127,6 +137,7 @@ BASE = """<!DOCTYPE html>
   </div>
   <div class="d-flex align-items-center gap-2">
     <span class="text-warning small">สถานะ: <b>{{ user.role }} ({{ user.username }})</b></span>
+    {% if user.role == 'Admin' %}<a href="/system-reset" class="btn btn-outline-danger btn-sm fw-bold px-2 py-1" style="font-size:.75rem;">⚠️ รีเซ็ตระบบ</a>{% endif %}
     <a href="/logout" class="btn btn-danger btn-sm fw-bold px-2 py-1" style="font-size:.75rem;">ออกจากระบบ</a>
   </div>
 </div>
@@ -1237,10 +1248,851 @@ def change_password_action(request: Request, old_password: str = Form(...), new_
     return redir("/change-password", msg="เปลี่ยนรหัสผ่านสำเร็จ")
 
 
-# ============================================================ เส้นทางเดิมที่ย้ายไปอยู่ในระบบหลัก
+# ============================================================ เมนูแอดมินทั้งหมด (เหมือนระบบหลัก)
+# เส้นทาง/พารามิเตอร์ใช้ชื่อเดียวกับระบบหลัก  ผู้ใช้มาจาก session cookie เสมอ (พารามิเตอร์ user/username ที่ส่งมาจะถูกเมิน)
+
+ADM_SYSTEM_RESET_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>LuckyNumber - System Reset (Go-Live)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-danger-subtle d-flex align-items-center justify-content-center" style="height: 100vh;">
+    <div class="card shadow-lg p-5 border border-danger border-3 bg-white" style="max-width: 600px; width: 100%;">
+        <div class="text-center mb-4">
+            <i class="fa-solid fa-triangle-exclamation text-danger fa-4x mb-3"></i>
+            <h2 class="text-danger fw-bold">⚠️ พื้นที่อันตราย: รีเซ็ตระบบเพื่อใช้งานจริง (Factory Reset)</h2>
+            <p class="text-muted small mt-2">คำสั่งนี้จะล้างข้อมูลการทดสอบทั้งหมดในฐานข้อมูลออกอย่างถาวร (โพย, ลูกค้า, สมาชิกทดสอบ, เลขอั้น, เรต, และงวดหวย) เพื่อให้ระบบสะอาดพร้อมเริ่มต้นใช้งานจริง</p>
+        </div>
+
+        {% if error %}
+        <div class="alert alert-danger text-center fw-bold">{{ error }}</div>
+        {% endif %}
+
+        <form method="POST" action="/execute-system-reset" onsubmit="return confirm('⚠️ คำเตือนขั้นเด็ดขาด! คุณแน่ใจจริงๆ หรือไม่ที่จะล้างข้อมูลทั้งหมดในระบบออก? ข้อมูลที่ถูกลบจะไม่สามารถกู้คืนได้!');">
+            <input type="hidden" name="username" value="{{ username }}">
+            
+            <div class="mb-3">
+                <label class="form-label fw-bold text-dark">🔑 ยืนยันรหัสผ่าน Admin ของคุณ:</label>
+                <input type="password" name="admin_password" class="form-control form-control-lg" placeholder="กรอกรหัสผ่านเพื่อยืนยัน..." required autofocus>
+            </div>
+
+            <div class="d-grid gap-2 mt-4">
+                <button type="submit" class="btn btn-danger btn-lg fw-bold py-3">
+                    <i class="fa-solid fa-bomb"></i> ยืนยันล้างข้อมูลและรีเซ็ตระบบทั้งหมด
+                </button>
+                <a href="/campaigns?user={{ username }}" class="btn btn-outline-secondary btn-lg fw-bold py-2">
+                    ❌ ยกเลิกและกลับสู่หน้าหลัก
+                </a>
+            </div>
+        </form>
+    </div>
+</body>
+</html>
+"""
+
+ADM_CAMPAIGN_TEMPLATE = """
+<div class="container-fluid my-3 px-3">
+    {% if missing_close_time_campaigns %}
+    <div class="alert alert-danger border border-danger shadow p-3 mb-4 rounded">
+        <h5 class="fw-bold text-danger"><i class="fa-solid fa-triangle-exclamation"></i> แจ้งเตือนสำคัญ: พบงวดหวยที่ยังไม่ได้กำหนด "เวลาปิดรับ" จำนวน {{ missing_close_time_campaigns | length }} งวด</h5>
+        <ul class="mb-0 fw-bold text-danger">
+            {% for mc in missing_close_time_campaigns %}
+                <li>งวด: {{ mc['draw_date'] }} (ID: {{ mc['id'] }}) — <a href="/campaigns?user={{ username }}&edit_id={{ mc['id'] }}" class="btn btn-sm btn-outline-danger py-0 fw-bold">แก้ไขด่วนที่นี่</a></li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    <div class="card bg-white p-4 shadow border mb-4">
+        <h2 class="text-center text-primary mb-4 fw-bold">📌 จัดการและเลือกงวดหวย</h2>
+        
+        {% if role == 'Admin' %}
+            {% if edit_campaign %}
+            <div class="card bg-warning-subtle p-3 mb-4 border border-warning">
+                <h5 class="text-dark mb-3 fw-bold">✏️ แก้ไขงวดหวยและเวลาปิดรับ</h5>
+                <form method="POST" action="/update-campaign">
+                    <input type="hidden" name="user" value="{{ username }}">
+                    <input type="hidden" name="campaign_id" value="{{ edit_campaign[3] }}">
+                    <div class="mb-2">
+                        <label class="form-label fw-bold text-dark">ชื่อหวย:</label>
+                        <input type="text" name="lotto_name" class="form-control" value="{{ edit_campaign[0] }}" required>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label fw-bold text-dark">งวดวันที่:</label>
+                        <input type="text" name="draw_date" class="form-control" value="{{ edit_campaign[1] }}" required>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6"><label class="form-label fw-bold text-success">🟢 เวลาเปิดรับแทง:</label>
+                        <input type="datetime-local" name="open_time" class="form-control" value="{{ edit_campaign[5] or '' }}" required></div>
+                        <div class="col-md-6"><label class="form-label fw-bold text-danger">⏰ เวลาปิดรับแทง:</label>
+                        <input type="datetime-local" name="close_time" class="form-control" value="{{ edit_campaign[4] or '' }}" required></div>
+                        <div class="form-text">ระบบเปิด-ปิดรับให้อัตโนมัติตามเวลาที่กำหนด (ก่อนเวลาเปิด/หลังเวลาปิดจะบันทึกโพยไม่ได้)</div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-warning w-100 fw-bold py-2">💾 บันทึกการแก้ไข</button>
+                        <a href="/campaigns?user={{ username }}" class="btn btn-outline-dark w-100 fw-bold py-2">ยกเลิก</a>
+                    </div>
+                </form>
+            </div>
+            {% else %}
+            <div class="card bg-light p-3 mb-4 border border-primary">
+                <h5 class="text-primary mb-3 fw-bold">➕ เปิดงวดหวยใหม่ (Admin)</h5>
+                <form method="POST" action="/create-campaign">
+                    <input type="hidden" name="user" value="{{ username }}">
+                    <div class="mb-2">
+                        <label class="form-label fw-bold text-dark">ชื่อหวย:</label>
+                        <input type="text" name="lotto_name" class="form-control" placeholder="เช่น หวยรัฐบาล, หวยลาว" required>
+                    </div>
+                    <div class="mb-2">
+                        <label class="form-label fw-bold text-dark">งวดวันที่:</label>
+                        <input type="text" name="draw_date" class="form-control" placeholder="เช่น 16 ตุลาคม 2026" required>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-md-6"><label class="form-label fw-bold text-success">🟢 เวลาเปิดรับแทง:</label>
+                        <input type="datetime-local" name="open_time" class="form-control" value="{{ now_local }}" required></div>
+                        <div class="col-md-6"><label class="form-label fw-bold text-danger">⏰ เวลาปิดรับแทง:</label>
+                        <input type="datetime-local" name="close_time" class="form-control" required></div>
+                        <div class="form-text">ระบบเปิด-ปิดรับให้อัตโนมัติตามเวลาที่กำหนด</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100 fw-bold py-2">เปิดงวดใหม่ (กำหนดเวลาเปิด-ปิดรับ)</button>
+                </form>
+            </div>
+            {% endif %}
+        {% endif %}
+        
+        {{ cards_html|safe }}
+    </div>
+</div>
+"""
+
+ADM_BLOCKED_TEMPLATE = """
+<div class="row">
+    <div class="col-md-5 mb-4">
+        <div class="card shadow p-4">
+            {% if edit_blocked %}
+                <h4 class="text-warning mb-3 fw-bold">✏️ แก้ไขเลขอั้น</h4>
+                <form method="POST" action="/update-blocked">
+                    <input type="hidden" name="user" value="{{ username }}">
+                    <input type="hidden" name="draw" value="{{ draw_date }}">
+                    <input type="hidden" name="blocked_id" value="{{ edit_blocked[0] }}">
+                    <div class="mb-3"><label class="form-label fw-bold">หมายเลขเลขอั้น:</label><input type="text" name="raw_num" class="form-control" value="{{ edit_blocked[2] }}" required></div>
+                    <div class="mb-3"><label class="form-label fw-bold">สถานะ:</label><select name="status" class="form-select"><option value="ปิดรับ" {% if edit_blocked[3] == 'ปิดรับ' %}selected{% endif %}>ปิดรับ</option><option value="จ่ายครึ่ง" {% if edit_blocked[3] == 'จ่ายครึ่ง' %}selected{% endif %}>จ่ายครึ่ง</option></select></div>
+                    <button type="submit" class="btn btn-warning w-100 fw-bold mb-2">💾 บันทึก</button>
+                    <a href="/blocked-numbers?user={{ username }}&draw={{ draw_date|urlencode }}" class="btn btn-outline-secondary w-100 fw-bold">ยกเลิก</a>
+                </form>
+            {% else %}
+                <h4 class="text-danger mb-3 fw-bold">🚫 นำเข้าเลขอั้น</h4>
+                <form method="POST" action="/save-blocked">
+                    <input type="hidden" name="user" value="{{ username }}">
+                    <input type="hidden" name="draw" value="{{ draw_date }}">
+                    <div class="mb-3"><label class="form-label fw-bold">ข้อมูลดิบ (ใช้คอมม่าคั่น):</label><textarea name="raw_input" class="form-control" rows="5" required autofocus></textarea></div>
+                    <div class="mb-3"><label class="form-label fw-bold">สถานะ:</label><select name="status" class="form-select"><option value="ปิดรับ">ปิดรับ</option><option value="จ่ายครึ่ง">จ่ายครึ่ง</option></select></div>
+                    <button type="submit" class="btn btn-danger w-100 fw-bold py-2">💾 ประมวลผลเลขอั้น</button>
+                </form>
+            {% endif %}
+        </div>
+    </div>
+    <div class="col-md-7">
+        <div class="card shadow p-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4 class="text-primary mb-0 fw-bold">📋 รายการเลขอั้นงวดนี้</h4>
+                {% if blocked_list %}
+                <a href="/clear-blocked?user={{ username }}&draw={{ draw_date|urlencode }}" class="btn btn-outline-danger btn-sm fw-bold" onclick="return confirm('⚠️ ล้างข้อมูลทั้งหมด?')">🗑️ ล้างข้อมูลเลขอั้น</a>
+                {% endif %}
+            </div>
+            <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                <table class="table table-striped table-bordered text-center align-middle" style="font-size: 0.9rem;">
+                    <thead class="table-dark sticky-top">
+                        <tr><th>ID</th><th>หมายเลข</th><th>สถานะ</th><th>ประเภท</th><th>จัดการ</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for b in blocked_list %}
+                        <tr>
+                            <td>{{ b[0] }}</td><td><b class="text-danger fs-6">{{ b[2] }}</b></td><td><span class="badge {% if b[3] == 'ปิดรับ' %}bg-danger{% else %}bg-warning text-dark{% endif %}">{{ b[3] }}</span></td><td>{{ b[4] }}</td>
+                            <td><a href="/blocked-numbers?user={{ username }}&draw={{ draw_date|urlencode }}&edit_id={{ b[0] }}" class="btn btn-warning btn-sm py-0 px-1 fw-bold">✏️</a> <a href="/delete-blocked?id={{ b[0] }}&user={{ username }}&draw={{ draw_date|urlencode }}" class="btn btn-outline-danger btn-sm py-0 px-1 fw-bold">🗑️</a></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+"""
+
+ADM_RESULTS_CONTENT = """
+<div class="card shadow p-4 mb-4">
+    <h2 class="text-success mb-3 fw-bold">🏆 บันทึกผลการออกรางวัลประจำงวด</h2>
+    <form method="POST" action="/save-results" class="row g-3">
+        <input type="hidden" name="user" value="{{ username }}">
+        <input type="hidden" name="draw" value="{{ draw_date }}">
+        <div class="col-md-6">
+            <label class="form-label fw-bold text-dark">รางวัลที่ 1 (3 ตัวตรง):</label>
+            <input type="text" name="prize_1" class="form-control form-control-lg" value="{{ prize_1 }}" required>
+        </div>
+        <div class="col-md-6">
+            <label class="form-label fw-bold text-dark">เลขท้าย 2 ตัว:</label>
+            <input type="text" name="bottom_2" class="form-control form-control-lg" value="{{ bottom_2 }}" required>
+        </div>
+        <div class="col-12">
+            <button type="submit" class="btn btn-success btn-lg w-100 fw-bold">💾 บันทึกและคำนวณผลชนะ/แพ้</button>
+        </div>
+    </form>
+</div>
+
+<div class="card shadow p-4">
+    <h3 class="text-primary mb-3 fw-bold">📊 รายงานสรุปผลรางวัล (แพ้/ชนะ)</h3>
+    <div class="row text-center mb-4">
+        <div class="col-md-6 mb-2"><div class="p-3 bg-white border rounded shadow-sm"><h5>จ่ายเงินรางวัลรวม</h5><h3 class="text-danger fw-bold">฿{{ "{:,.2f}".format(total_payout) }}</h3></div></div>
+        <div class="col-md-6 mb-2"><div class="p-3 bg-warning text-dark border rounded shadow-sm"><h5>กำไรสุทธิ (หลังหักจ่าย)</h5><h3 class="fw-bold">฿{{ "{:,.2f}".format(total_net - total_payout) }}</h3></div></div>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-striped table-bordered text-center align-middle">
+            <thead class="table-dark">
+                <tr><th>ลูกค้า</th><th>ผู้บันทึก</th><th>หมายเลข</th><th>ประเภท</th><th>ยอดซื้อ</th><th>เงินรางวัลที่ได้รับ</th></tr>
+            </thead>
+            <tbody>
+                {% for w in winners %}
+                <tr>
+                    <td><b>{{ w[0] }}</b></td><td><span class="badge bg-secondary">{{ w[1] }}</span></td><td><code class="fs-5">{{ w[2] }}</code></td><td>{{ w[3] }}</td><td>{{ "{:,.2f}".format(w[4] | float) }}</td><td class="text-success fw-bold fs-5">฿{{ "{:,.2f}".format(w[6] | float) }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="6" class="text-muted">ยังไม่มีผู้ถูกรางวัลในงวดนี้</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+"""
+
+ADM_DASHBOARD_CONTENT = """
+<div class="card shadow p-4 mb-4">
+    <h2 class="text-primary mb-3 fw-bold"><i class="fa-solid fa-chart-pie"></i> แดชบอร์ดสรุปยอดขาย</h2>
+    
+    <!-- ฟอร์มเลือกช่วงเวลา -->
+    <form method="GET" action="/dashboard" class="row g-3 mb-4 bg-light p-3 border rounded shadow-sm">
+        <input type="hidden" name="user" value="{{ username }}">
+        <input type="hidden" name="draw" value="{{ draw_date }}">
+        <div class="col-md-4">
+            <label class="form-label fw-bold text-dark">📅 ตั้งแต่วันที่:</label>
+            <input type="date" name="start_date" class="form-control" value="{{ start_date }}">
+        </div>
+        <div class="col-md-4">
+            <label class="form-label fw-bold text-dark">📅 ถึงวันที่:</label>
+            <input type="date" name="end_date" class="form-control" value="{{ end_date }}">
+        </div>
+        <div class="col-md-4 d-flex align-items-end">
+            <button type="submit" class="btn btn-primary w-100 fw-bold"><i class="fa-solid fa-magnifying-glass"></i> ค้นหาข้อมูล</button>
+        </div>
+    </form>
+
+    <!-- สรุปยอดรวม -->
+    <div class="row text-center mb-4">
+        <div class="col-md-6 mb-2">
+            <div class="p-3 bg-white border border-primary border-2 rounded shadow-sm">
+                <h5 class="text-muted fw-bold">ยอดขายรวมช่วงเวลาที่เลือก</h5>
+                <h1 class="text-primary fw-bold">฿{{ "{:,.2f}".format(total_sales) }}</h1>
+            </div>
+        </div>
+        <div class="col-md-6 mb-2">
+            <div class="p-3 bg-white border border-success border-2 rounded shadow-sm">
+                <h5 class="text-muted fw-bold">ยอดสุทธิรวม</h5>
+                <h1 class="text-success fw-bold">฿{{ "{:,.2f}".format(total_net) }}</h1>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- รายละเอียดแบ่งตามผู้ใช้ -->
+    <div class="col-md-6 mb-4">
+        <div class="card shadow p-3 h-100 border-0">
+            <h5 class="text-dark fw-bold mb-3"><i class="fa-solid fa-users"></i> ยอดขายแยกตามผู้ใช้ / เอเย่นต์</h5>
+            <ul class="list-group list-group-flush">
+                {% for user_sale in user_sales %}
+                <li class="list-group-item d-flex justify-content-between align-items-center bg-transparent">
+                    <span class="fw-bold text-dark">{{ user_sale[0] }}</span>
+                    <span class="badge bg-primary rounded-pill fs-6 px-3 py-2 shadow-sm">฿{{ "{:,.2f}".format(user_sale[1]) }}</span>
+                </li>
+                {% else %}
+                <li class="list-group-item text-muted text-center">ไม่มีข้อมูลในช่วงเวลานี้</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+    
+    <!-- รายละเอียดแบ่งตามประเภทหวย -->
+    <div class="col-md-6 mb-4">
+        <div class="card shadow p-3 h-100 border-0">
+            <h5 class="text-dark fw-bold mb-3"><i class="fa-solid fa-ticket"></i> ยอดขายแยกตามประเภทหวย</h5>
+            <ul class="list-group list-group-flush">
+                {% for lotto_sale in lotto_sales %}
+                <li class="list-group-item d-flex justify-content-between align-items-center bg-transparent">
+                    <span class="fw-bold text-dark">{{ lotto_sale[0] }}</span>
+                    <span class="badge bg-danger rounded-pill fs-6 px-3 py-2 shadow-sm">฿{{ "{:,.2f}".format(lotto_sale[1]) }}</span>
+                </li>
+                {% else %}
+                <li class="list-group-item text-muted text-center">ไม่มีข้อมูลในช่วงเวลานี้</li>
+                {% endfor %}
+            </ul>
+        </div>
+    </div>
+</div>
+"""
+
+ADM_AUDIT_ALL_CONTENT = """
+<div class="card shadow p-4">
+    <h2 class="text-primary mb-4 fw-bold">🔍 ตรวจสอบรายการซื้อทั้งหมดในระบบ</h2>
+    <div class="table-responsive">
+        <table class="table table-striped table-bordered text-center align-middle">
+            <thead class="table-dark">
+                <tr><th>เวลาทำรายการ</th><th>เลขที่บิล</th><th>ผู้บันทึก</th><th>ลูกค้า</th><th>ประเภท</th><th>หมายเลข</th><th>ยอดซื้อ</th><th>อัตราจ่าย</th></tr>
+            </thead>
+            <tbody>
+                {% for r in audit_rows %}
+                <tr>
+                    <td><small>{{ r[2] }}</small></td><td><code>{{ r[7] }}</code></td><td><span class="badge bg-secondary">{{ r[3] }}</span></td><td><b>{{ r[5] }}</b></td><td>{{ r[9] }}</td><td><b class="text-primary">{{ r[8] }}</b></td><td>{{ "{:,.2f}".format(r[10] | float) }}</td><td><span class="badge bg-success">{{ r[14] }}</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+"""
+
+ADM_AUDIT_DISCOUNT_CONTENT = """
+<div class="card shadow p-4">
+    <h2 class="text-primary mb-3 fw-bold">🔍 ตรวจสอบส่วนลดลูกค้า</h2>
+    <div class="table-responsive mt-3">
+        <table class="table table-striped table-bordered text-center align-middle">
+            <thead class="table-dark">
+                <tr><th>เวลา</th><th>เลขที่บิล</th><th>ลูกค้า</th><th>ประเภท</th><th>หมายเลข</th><th>ยอดซื้อ</th><th>ส่วนลด</th><th>ยอดสุทธิ</th></tr>
+            </thead>
+            <tbody>
+                {% for r in discount_rows %}
+                <tr>
+                    <td><small>{{ r[2] }}</small></td><td><code>{{ r[7] }}</code></td><td><b>{{ r[5] }}</b></td><td>{{ r[9] }}</td><td><b class="text-primary">{{ r[8] }}</b></td><td>{{ "{:,.2f}".format(r[10] | float) }}</td><td class="text-danger fw-bold">{{ "{:,.2f}".format(r[12] | float) }}</td><td class="text-success fw-bold">{{ "{:,.2f}".format(r[13] | float) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+"""
+
+ADM_DB_INSPECTOR_TEMPLATE = """
+<div class="card shadow p-4">
+    <h2 class="text-primary mb-3 fw-bold">🗄️ Database Inspector</h2>
+    <form method="GET" action="/db-inspector" class="mb-4">
+        <input type="hidden" name="user" value="{{ username }}">
+        <input type="hidden" name="draw" value="{{ draw_date }}">
+        <select name="table_name" class="form-select form-select-lg" onchange="this.form.submit()">
+            {% for t in tables %}
+                <option value="{{ t }}" {% if selected_table == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+        </select>
+    </form>
+    {% if selected_table %}
+        <div class="table-responsive">
+            <table class="table table-striped table-bordered text-center">
+                <thead class="table-dark">
+                    <tr>{% for col in columns %}<th>{{ col }}</th>{% endfor %}</tr>
+                </thead>
+                <tbody>
+                    {% for r in rows %}
+                    <tr>{% for val in r %}<td>{{ val }}</td>{% endfor %}</tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+</div>
+"""
+
+
+ADMIN_PAGE = """{% extends "base.html" %}
+{% block body %}
+<div class="container-fluid my-3 px-3">
+{% if draw_date %}
+<div class="alert alert-dark py-2 d-flex flex-wrap gap-2 align-items-center">
+  <b class="me-2">งวด: {{ draw_date }}</b>
+  <a class="btn btn-sm btn-outline-primary" href="/blocked-numbers?draw={{ draw_date|urlencode }}">🚫 เลขอั้น</a>
+  <a class="btn btn-sm btn-outline-success" href="/results?draw={{ draw_date|urlencode }}">🏆 ผลรางวัล</a>
+  <a class="btn btn-sm btn-outline-primary" href="/audit-all?draw={{ draw_date|urlencode }}">🔍 ตรวจสอบทั้งหมด</a>
+  <a class="btn btn-sm btn-outline-primary" href="/audit-discount?draw={{ draw_date|urlencode }}">🔍 ส่วนลด</a>
+  <a class="btn btn-sm btn-outline-secondary" href="/admin-pick?to=/blocked-numbers">เปลี่ยนงวด</a>
+</div>
+{% endif %}
+{{ content|safe }}
+</div>
+{% endblock %}"""
+
+ADMIN_PICK = """{% extends "base.html" %}
+{% block body %}
+<div class="container-fluid my-3 px-3"><div class="card p-4 shadow">
+<h3 class="fw-bold text-primary text-center mb-1">{{ title }}</h3>
+<p class="text-center text-muted">เลือกงวดที่ต้องการ</p>
+{{ cards_html|safe }}
+</div></div>
+{% endblock %}"""
+
+env.loader.mapping.update({"admin_page.html": ADMIN_PAGE, "admin_pick.html": ADMIN_PICK})
+
+_PICK_TITLES = {"/blocked-numbers": "🚫 จัดการเลขอั้น", "/results": "🏆 ออกผลรางวัล", "/audit-all": "🔍 ตรวจสอบรายการทั้งหมด",
+                "/audit-discount": "🔍 ตรวจสอบส่วนลดลูกค้า", "/dashboard": "📊 แดชบอร์ด"}
+
+
+def _split_draw(draw):
+    """'หวยลาว งวด 16 ตุลาคม 2026' -> ('หวยลาว', '16 ตุลาคม 2026')"""
+    draw = (draw or "").strip()
+    if " งวด " in draw:
+        name, d = draw.split(" งวด ", 1)
+        return name.strip(), d.strip()
+    if "งวด " in draw:
+        return "", draw.split("งวด ", 1)[1].strip()
+    return "", draw
+
+
+def _csrf_ok(request):
+    return request.headers.get("sec-fetch-site", "same-origin") != "cross-site"
+
+
+def _admin_gate(c, request, mutating=False):
+    """คืน (me, None) ถ้าเป็นแอดมิน ไม่เช่นนั้น (None, response)"""
+    me = get_me(c, request)
+    if not me:
+        return None, to_login()
+    if me["role"] != "Admin":
+        return None, redir("/select-market", error="เมนูนี้สำหรับแอดมินเท่านั้น")
+    if mutating and not _csrf_ok(request):
+        return None, redir("/campaigns", error="คำขอถูกปฏิเสธ (cross-site)")
+    return me, None
+
+
+def _close_time(c, draw_clean):
+    if not draw_clean:
+        return None
+    c.execute("SELECT close_time FROM LotteryCampaigns WHERE draw_date = %s OR draw_date ILIKE %s ORDER BY id DESC LIMIT 1",
+              (draw_clean, f"%{common.like_escape(draw_clean)}%"))
+    r = c.fetchone()
+    return r[0] if r and r[0] else None
+
+
+def _admin_render(request, me, template, draw_date="", **ctx):
+    content = env.from_string(template).render(username=me["username"], role=me["role"], draw_date=draw_date, **ctx)
+    return render(request, "admin_page.html", user=me, content=content, draw_date=draw_date)
+
+
+def _pick_draw(request, me, c, to):
+    c.execute("SELECT id, lotto_name, draw_date, status, open_time, close_time, result_timestamp FROM LotteryCampaigns "
+              "ORDER BY id DESC LIMIT 300")
+    rows = [dict(id=r[0], lotto_name=r[1], draw_date=r[2], status=r[3], open_time=r[4], close_time=r[5], result_timestamp=r[6])
+            for r in c.fetchall()]
+    href = lambda r: to + "?" + urlencode({"draw": f"{common.clean_name(r['lotto_name'])} งวด {common.clean_name(r['draw_date'])}"})
+    cards = common.render_campaign_cards(rows, href, show_old_toggle=True)
+    return render(request, "admin_pick.html", user=me, title=_PICK_TITLES.get(to, "เลือกงวด"), cards_html=cards)
+
+
+@app.get("/admin-pick", response_class=HTMLResponse)
+def admin_pick(request: Request, to: str = "/blocked-numbers"):
+    if to not in _PICK_TITLES:
+        to = "/blocked-numbers"
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request)
+        if bad:
+            return bad
+        return _pick_draw(request, me, c, to)
+
+
+# ---------------- จัดการงวด ----------------
+
+def _campaign_times(open_time, close_time):
+    ot, ct = common.normalize_dt(open_time), common.normalize_dt(close_time)
+    if not ot or not ct:
+        return None, None, "กรุณาระบุเวลาเปิดรับและเวลาปิดรับให้ถูกต้อง"
+    if ct <= ot:
+        return None, None, "เวลาปิดรับต้องอยู่หลังเวลาเปิดรับ"
+    return ot, ct, None
+
+
+@app.get("/campaigns", response_class=HTMLResponse)
+def campaigns_page(request: Request, edit_id: int = None):
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request)
+        if bad:
+            return bad
+        c.execute("SELECT id, lotto_name, draw_date, status, open_time, close_time, result_timestamp "
+                  "FROM LotteryCampaigns ORDER BY id DESC LIMIT 400")
+        rows = [dict(id=r[0], lotto_name=r[1], draw_date=r[2], status=r[3], open_time=r[4], close_time=r[5],
+                     result_timestamp=r[6]) for r in c.fetchall()]
+        missing = [{"id": r["id"], "draw_date": r["draw_date"]} for r in rows if not r["close_time"] and r["status"] == "Active"]
+        edit_campaign = None
+        if edit_id:
+            c.execute("SELECT lotto_name, draw_date, status, id, close_time, open_time FROM LotteryCampaigns WHERE id=%s", (edit_id,))
+            edit_campaign = c.fetchone()
+
+    def actions(r):
+        d = f"{common.clean_name(r['lotto_name'])} งวด {common.clean_name(r['draw_date'])}"
+        q = urlencode({"draw": d})
+        return [("✏️ แก้ไข", "/campaigns?" + urlencode({"edit_id": r["id"]})),
+                ("🔁 เปิด/ปิดงวด", "/toggle-campaign?" + urlencode({"id": r["id"]})),
+                ("🚫 เลขอั้น", "/blocked-numbers?" + q), ("🏆 ผลรางวัล", "/results?" + q)]
+
+    cards_html = common.render_campaign_cards(rows, lambda r: f"/portal?campaign_id={r['id']}", actions, show_old_toggle=True)
+    return _admin_render(request, me, ADM_CAMPAIGN_TEMPLATE, missing_close_time_campaigns=missing, edit_campaign=edit_campaign,
+                         cards_html=cards_html, now_local=common.get_thai_time().strftime("%Y-%m-%dT%H:%M"))
+
+
+@app.get("/create-campaign")
+@app.get("/update-campaign")
+def campaign_get_fallback(request: Request):
+    return redir("/campaigns", error="ส่งฟอร์มไม่สำเร็จ (คำขอไม่ใช่ POST) กรุณากรอกแล้วกดปุ่มบนหน้านี้อีกครั้ง")
+
+
+@app.post("/create-campaign")
+def create_campaign(request: Request, lotto_name: str = Form(...), draw_date: str = Form(...),
+                    open_time: str = Form(...), close_time: str = Form(...), user: str = Form("")):
+    lotto_name, draw_date = common.clean_name(lotto_name), common.clean_name(draw_date)
+    ot, ct, err = _campaign_times(open_time, close_time)
+    if err or not lotto_name or not draw_date:
+        return redir("/campaigns", error=err or "กรุณาระบุชื่อหวยและงวด")
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request, mutating=True)
+        if bad:
+            return bad
+        c.execute("INSERT INTO LotteryCampaigns (lotto_name, draw_date, status, open_time, close_time) VALUES (%s,%s,'Active',%s,%s)",
+                  (lotto_name, draw_date, ot, ct))
+    return redir("/campaigns", msg="สร้างงวดหวยสำเร็จ")
+
+
+@app.post("/update-campaign")
+def update_campaign(request: Request, campaign_id: int = Form(...), lotto_name: str = Form(...), draw_date: str = Form(...),
+                    open_time: str = Form(...), close_time: str = Form(...), user: str = Form("")):
+    lotto_name, draw_date = common.clean_name(lotto_name), common.clean_name(draw_date)
+    ot, ct, err = _campaign_times(open_time, close_time)
+    if err or not lotto_name or not draw_date:
+        return redir("/campaigns", edit_id=campaign_id, error=err or "กรุณาระบุชื่อหวยและงวด")
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request, mutating=True)
+        if bad:
+            return bad
+        c.execute("UPDATE LotteryCampaigns SET lotto_name=%s, draw_date=%s, open_time=%s, close_time=%s WHERE id=%s",
+                  (lotto_name, draw_date, ot, ct, campaign_id))
+    return redir("/campaigns", msg="แก้ไขสำเร็จ")
+
+
+@app.get("/toggle-campaign")
+def toggle_campaign(request: Request, id: int):
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request, mutating=True)
+        if bad:
+            return bad
+        c.execute("SELECT status FROM LotteryCampaigns WHERE id=%s", (id,))
+        curr = c.fetchone()
+        if curr:
+            c.execute("UPDATE LotteryCampaigns SET status=%s, result_timestamp=NULL WHERE id=%s",
+                      ("Closed" if curr[0] == "Active" else "Active", id))
+    return redir("/campaigns")
+
+
+# ---------------- เลขอั้น ----------------
+
+@app.get("/blocked-numbers", response_class=HTMLResponse)
+def blocked_numbers_page(request: Request, draw: str = "", edit_id: int = None):
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request)
+        if bad:
+            return bad
+        if not draw:
+            return _pick_draw(request, me, c, "/blocked-numbers")
+        c.execute("SELECT id, draw_date, raw_num, status, type, is_raw FROM BlockedNumbers "
+                  "WHERE (draw_date = %s OR draw_date ILIKE %s) ORDER BY id DESC", (draw, f"%{common.like_escape(draw)}%"))
+        blocked_list = c.fetchall()
+        edit_blocked = None
+        if edit_id:
+            c.execute("SELECT id, draw_date, raw_num, status, type FROM BlockedNumbers WHERE id=%s", (edit_id,))
+            edit_blocked = c.fetchone()
+    return _admin_render(request, me, ADM_BLOCKED_TEMPLATE, draw_date=draw, blocked_list=blocked_list, edit_blocked=edit_blocked)
+
+
+@app.post("/save-blocked")
+def save_blocked(request: Request, draw: str = Form(...), raw_input: str = Form(...),
+                 block_status: str = Form(..., alias="status"), user: str = Form("")):
+    if block_status not in ("ปิดรับ", "จ่ายครึ่ง"):
+        return redir("/blocked-numbers", draw=draw, error="สถานะไม่ถูกต้อง")
+    lotto_name, _ = _split_draw(draw)
+    cleaned = raw_input.replace("\r\n", ",").replace("\n", ",").replace(" ", ",")
+    insert_data, seen = [], set()
+    for num_str in [i.strip() for i in cleaned.split(",") if i.strip()]:
+        if not num_str.isdigit() or len(num_str) > 3:
+            continue
+        t_val = "3ตัว" if len(num_str) == 3 else ("2ตัว" if len(num_str) == 2 else "วิ่ง")
+        if num_str not in seen:
+            insert_data.append((draw.strip(), num_str, block_status, t_val, True, lotto_name or None))
+            seen.add(num_str)
+        for p_num in set("".join(p) for p in itertools.permutations(num_str)):
+            if p_num not in seen:
+                insert_data.append((draw.strip(), p_num, block_status, t_val, False, lotto_name or None))
+                seen.add(p_num)
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request, mutating=True)
+        if bad:
+            return bad
+        if insert_data:
+            c.executemany("INSERT INTO BlockedNumbers (draw_date, raw_num, status, type, is_raw, lotto_name) "
+                          "VALUES (%s,%s,%s,%s,%s,%s)", insert_data)
+    return redir("/blocked-numbers", draw=draw, msg="บันทึกเลขอั้นสำเร็จ")
+
+
+@app.post("/update-blocked")
+def update_blocked(request: Request, draw: str = Form(...), blocked_id: int = Form(...), raw_num: str = Form(...),
+                   block_status: str = Form(..., alias="status"), user: str = Form("")):
+    n = raw_num.strip()
+    t_val = "3ตัว" if len(n) == 3 else ("2ตัว" if len(n) == 2 else ("วิ่ง" if len(n) == 1 else "อื่นๆ"))
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request, mutating=True)
+        if bad:
+            return bad
+        c.execute("UPDATE BlockedNumbers SET raw_num=%s, status=%s, type=%s, is_raw=TRUE WHERE id=%s",
+                  (n, block_status, t_val, blocked_id))
+    return redir("/blocked-numbers", draw=draw, msg="แก้ไขสำเร็จ")
+
+
+@app.get("/delete-blocked")
+def delete_blocked(request: Request, id: int, draw: str = ""):
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request, mutating=True)
+        if bad:
+            return bad
+        c.execute("DELETE FROM BlockedNumbers WHERE id=%s", (id,))
+    return redir("/blocked-numbers", draw=draw)
+
+
+@app.get("/clear-blocked")
+def clear_blocked(request: Request, draw: str):
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request, mutating=True)
+        if bad:
+            return bad
+        c.execute("DELETE FROM BlockedNumbers WHERE draw_date = %s OR draw_date ILIKE %s", (draw, f"%{common.like_escape(draw)}%"))
+    return redir("/blocked-numbers", draw=draw)
+
+
+# ---------------- ผลรางวัล ----------------
+
+@app.get("/results", response_class=HTMLResponse)
+def results_page(request: Request, draw: str = ""):
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request)
+        if bad:
+            return bad
+        if not draw:
+            return _pick_draw(request, me, c, "/results")
+        _, draw_clean = _split_draw(draw)
+        like = f"%{common.like_escape(draw_clean)}%"
+        c.execute("SELECT prize_1, bottom_2 FROM DrawResults WHERE draw_date = %s OR draw_date ILIKE %s", (draw_clean, like))
+        res = c.fetchone()
+        prize_1 = str(res[0]).strip() if res and res[0] else ""
+        bottom_2 = str(res[1]).strip() if res and res[1] else ""
+        c.execute("SELECT raw_num, status FROM BlockedNumbers WHERE draw_date = %s OR draw_date ILIKE %s", (draw_clean, like))
+        half_pay = {str(n).strip() for n, s in c.fetchall() if s != "ปิดรับ" and n}
+        c.execute("SELECT SUM(amount), SUM(net) FROM Transactions WHERE (draw_date = %s OR draw_date ILIKE %s)", (draw_clean, like))
+        sr = c.fetchone()
+        total_sales = float(sr[0] or 0) if sr else 0.0
+        total_net = float(sr[1] or 0) if sr else 0.0
+        winners, total_payout = [], 0.0
+        c.execute("SELECT customer_name, username, num, type, amount, payout_rate FROM Transactions "
+                  "WHERE (draw_date = %s OR draw_date ILIKE %s)", (draw_clean, like))
+        for cname, uname, num, ttype, amt, rate in c.fetchall():
+            amt_val, rate_val = float(amt or 0), float(rate or 0)
+            n, t = str(num).strip(), str(ttype).strip()
+            win = False
+            if t == "3ตัวตรง" and prize_1 and n == prize_1: win = True
+            elif t == "3ตัวโต๊ด" and prize_1 and sorted(n) == sorted(prize_1) and n != prize_1: win = True
+            elif t == "2ตัวบน" and prize_1 and len(prize_1) >= 2 and n == prize_1[-2:]: win = True
+            elif t == "2ตัวล่าง" and bottom_2 and n == bottom_2: win = True
+            elif t == "วิ่งบน" and prize_1 and n in list(prize_1): win = True
+            elif t == "วิ่งล่าง" and bottom_2 and n in list(bottom_2): win = True
+            if win:
+                if n in half_pay:
+                    rate_val /= 2.0
+                payout = amt_val * rate_val
+                winners.append((cname, uname, n, t, amt_val, rate_val, payout))
+                total_payout += payout
+    return _admin_render(request, me, ADM_RESULTS_CONTENT, draw_date=draw, prize_1=prize_1, bottom_2=bottom_2,
+                         total_sales=total_sales, total_net=total_net, winners=winners, total_payout=total_payout)
+
+
+@app.post("/save-results")
+def save_results(request: Request, draw: str = Form(...), prize_1: str = Form(...), bottom_2: str = Form(...), user: str = Form("")):
+    _, draw_clean = _split_draw(draw)
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request, mutating=True)
+        if bad:
+            return bad
+        c.execute("INSERT INTO DrawResults (draw_date, prize_1, bottom_2) VALUES (%s,%s,%s) "
+                  "ON CONFLICT (draw_date) DO UPDATE SET prize_1=EXCLUDED.prize_1, bottom_2=EXCLUDED.bottom_2",
+                  (draw_clean, prize_1.strip(), bottom_2.strip()))
+        c.execute("UPDATE LotteryCampaigns SET result_timestamp=%s WHERE draw_date = %s OR draw_date ILIKE %s",
+                  (common.get_thai_time().strftime("%Y-%m-%d %H:%M:%S"), draw_clean, f"%{common.like_escape(draw_clean)}%"))
+    return redir("/results", draw=draw, msg="บันทึกผลรางวัลสำเร็จ เริ่มนับถอยหลังปิดงวดอัตโนมัติ 2 วัน")
+
+
+# ---------------- แดชบอร์ด / ตรวจสอบ / DB ----------------
+
+@app.get("/dashboard", response_class=HTMLResponse)
+def dashboard_page(request: Request, draw: str = "", start_date: str = None, end_date: str = None):
+    with db() as conn:
+        c = conn.cursor()
+        me = get_me(c, request)
+        if not me:
+            return to_login()
+        if not is_manager(me):
+            return redir("/select-market", error="เมนูนี้สำหรับผู้จัดการขึ้นไป")
+        if me["role"] == "Admin":
+            c.execute("SELECT username, COALESCE(lotto_name,'ไม่ระบุประเภท'), timestamp, amount, net FROM Transactions WHERE timestamp IS NOT NULL")
+        else:
+            c.execute("SELECT username, COALESCE(lotto_name,'ไม่ระบุประเภท'), timestamp, amount, net FROM Transactions "
+                      "WHERE timestamp IS NOT NULL AND username = ANY(%s)", (common.get_subtree(c, me["username"]),))
+        rows = c.fetchall()
+    try:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59) if end_date else None
+    except ValueError:
+        start_dt = end_dt = None
+    total_sales = total_net = 0.0
+    usd, lsd = {}, {}
+    for r_user, r_lotto, r_time, r_amt, r_net in rows:
+        row_dt = None
+        try:
+            r_time = str(r_time)
+            if "/" in r_time:
+                row_dt = datetime.strptime(r_time[:19], "%d/%m/%Y %H:%M:%S")
+            elif "-" in r_time:
+                row_dt = datetime.strptime(r_time[:19], "%Y-%m-%d %H:%M:%S")
+        except Exception:
+            pass
+        if row_dt:
+            if (start_dt and row_dt < start_dt) or (end_dt and row_dt > end_dt):
+                continue
+        elif start_dt or end_dt:
+            continue
+        amt, net = float(r_amt or 0), float(r_net or 0)
+        total_sales += amt
+        total_net += net
+        usd[r_user] = usd.get(r_user, 0.0) + amt
+        lsd[r_lotto] = lsd.get(r_lotto, 0.0) + amt
+    return _admin_render(request, me, ADM_DASHBOARD_CONTENT, draw_date=draw, start_date=start_date or "", end_date=end_date or "",
+                         total_sales=total_sales, total_net=total_net,
+                         user_sales=sorted(usd.items(), key=lambda x: x[1], reverse=True),
+                         lotto_sales=sorted(lsd.items(), key=lambda x: x[1], reverse=True))
+
+
+def _audit(request, to, template, key, admin_only):
+    draw = request.query_params.get("draw", "")
+    with db() as conn:
+        c = conn.cursor()
+        me = get_me(c, request)
+        if not me:
+            return to_login()
+        if admin_only and me["role"] != "Admin":
+            return redir("/select-market", error="เมนูนี้สำหรับแอดมินเท่านั้น")
+        if not is_manager(me):
+            return redir("/select-market", error="เมนูนี้สำหรับผู้จัดการขึ้นไป")
+        if not draw:
+            return _pick_draw(request, me, c, to)
+        _, draw_clean = _split_draw(draw)
+        like = f"%{common.like_escape(draw_clean)}%"
+        if me["role"] == "Admin":
+            c.execute("SELECT * FROM Transactions WHERE (draw_date = %s OR draw_date ILIKE %s) ORDER BY id DESC LIMIT 5000", (draw_clean, like))
+        else:
+            c.execute("SELECT * FROM Transactions WHERE ((draw_date = %s OR draw_date ILIKE %s) AND username = ANY(%s)) ORDER BY id DESC LIMIT 5000",
+                      (draw_clean, like, common.get_subtree(c, me["username"])))
+        rows = c.fetchall()
+    return _admin_render(request, me, template, draw_date=draw, **{key: rows})
+
+
+@app.get("/audit-all", response_class=HTMLResponse)
+def audit_all_page(request: Request):
+    return _audit(request, "/audit-all", ADM_AUDIT_ALL_CONTENT, "audit_rows", True)
+
+
+@app.get("/audit-discount", response_class=HTMLResponse)
+def audit_discount_page(request: Request):
+    return _audit(request, "/audit-discount", ADM_AUDIT_DISCOUNT_CONTENT, "discount_rows", False)
+
+
+@app.get("/db-inspector", response_class=HTMLResponse)
+def db_inspector_page(request: Request, draw: str = "", table_name: str = None):
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request)
+        if bad:
+            return bad
+        c.execute("SELECT tablename FROM pg_tables WHERE schemaname = 'public' ORDER BY tablename")
+        tables = [r[0] for r in c.fetchall()]
+        selected = table_name if table_name in tables else (tables[0] if tables else None)
+        rows, columns = [], []
+        if selected:
+            c.execute(f'SELECT * FROM "{selected}" ORDER BY 1 DESC LIMIT 100')
+            rows = c.fetchall()
+            columns = [d[0] for d in c.description]
+    return _admin_render(request, me, ADM_DB_INSPECTOR_TEMPLATE, draw_date=draw, tables=tables, selected_table=selected,
+                         columns=columns, rows=rows)
+
+
+# ---------------- รีเซ็ตระบบ ----------------
+
+@app.get("/system-reset", response_class=HTMLResponse)
+def system_reset_page(request: Request):
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request)
+        if bad:
+            return bad
+    return HTMLResponse(env.from_string(ADM_SYSTEM_RESET_TEMPLATE).render(
+        username=me["username"], error=request.query_params.get("error")))
+
+
+@app.post("/execute-system-reset")
+def execute_system_reset(request: Request, admin_password: str = Form(...), username: str = Form("")):
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request, mutating=True)
+        if bad:
+            return bad
+        c.execute("SELECT password FROM Users WHERE id=%s", (me["id"],))
+        row = c.fetchone()
+        if not row or not common.verify_password(row[0], admin_password):
+            return redir("/system-reset", error="รหัสผ่าน Admin ไม่ถูกต้อง ไม่สามารถรีเซ็ตระบบได้!")
+        for tbl in ("Transactions", "TempDraft", "BlockedNumbers", "CustomerLottoRates", "AgentSettlements",
+                    "DrawResults", "Customers", "LotteryCampaigns"):
+            c.execute(f"DELETE FROM {tbl}")
+        c.execute("DELETE FROM Users WHERE id <> %s", (me["id"],))
+    return redir("/login", error="รีเซ็ตระบบสำเร็จ! ข้อมูลถูกล้างเรียบร้อยพร้อมเริ่มใช้งานจริงแล้ว")
+
 
 @app.get("/admin-campaigns")
+def old_admin_campaigns():
+    return redir("/campaigns")
+
+
 @app.get("/admin-blocked")
-@app.get("/system-reset")
-def moved_to_main():
-    return redir("/select-market", msg="ฟังก์ชันนี้ใช้งานที่ระบบหลักเท่านั้น (จัดการงวด/เลขอั้น/รีเซ็ตระบบ)")
+def old_admin_blocked():
+    return redir("/blocked-numbers")
