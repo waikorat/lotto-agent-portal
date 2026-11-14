@@ -118,8 +118,8 @@ BASE = """<!DOCTYPE html>
     <div class="top-nav-menu">
       <a href="/select-market">บันทึกโพย</a>
       <a href="/agent-reports">รายงานผล</a>
-      {% if user.role == 'Admin' %}
       <a href="/live-sales" class="text-info">📈 ยอดขายสด</a>
+      {% if user.role == 'Admin' %}
       <a href="/campaigns" class="text-warning">📌 จัดการงวด</a>
       <a href="/blocked-numbers">🚫 เลขอั้น</a>
       <a href="/results">🏆 ผลรางวัล</a>
@@ -257,7 +257,7 @@ PORTAL = """{% extends "base.html" %}
     {% endif %}
     <a href="/select-market" class="menu-item text-primary">🏠 กลับหน้าเลือกหวย</a>
     <a href="/agent-reports" class="menu-item text-success">📊 รายงานผล & สรุปยอด</a>
-    {% if user.role == 'Admin' %}<a href="/live-sales" class="menu-item text-info">📈 ยอดขายสด (เรียลไทม์)</a>{% endif %}
+    <a href="/live-sales" class="menu-item text-info">📈 ยอดขายสด (เรียลไทม์)</a>
   </div>
 
   <div class="content-center">
@@ -661,8 +661,6 @@ def live_sales_page(request: Request):
         me = get_me(c, request)
         if not me:
             return to_login()
-        if me["role"] != "Admin":
-            return redir("/select-market", error="เมนูนี้สำหรับแอดมินเท่านั้น")
         inner = common.render_live_sales(c, "/live-sales-data")
     return render(request, "live_sales.html", user=me, inner=inner)
 
@@ -672,7 +670,7 @@ def live_sales_data_api(request: Request, node: str = "", f: str = ""):
     with db() as conn:
         c = conn.cursor()
         me = get_me(c, request)
-        if not me or me["role"] != "Admin":
+        if not me:
             return JSONResponse({"error": "forbidden"}, status_code=403)
         data = common.live_sales_data(c, me["username"], node or me["username"], f)
     return JSONResponse(data)
