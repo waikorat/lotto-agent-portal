@@ -355,9 +355,9 @@ PORTAL = """{% extends "base.html" %}
     <h6 class="text-center fw-bold text-danger mb-3">🚫 เลขอั้นประจำงวด</h6>
     <label class="fw-bold small">1. เลขอั้นปิดรับ:</label>
     <textarea class="form-control form-control-sm mb-2 bg-light text-danger fw-bold" rows="3" readonly>{{ block_closed }}</textarea>
-    <label class="fw-bold small">2. เลขอั้น 3 ตัวจ่ายครึ่ง:</label>
+    <label class="fw-bold small">2. เลขอั้น 3ตัวตรง-โต๊ด ทุกกลับ(จ่ายครึ่ง):</label>
     <textarea class="form-control form-control-sm mb-2 bg-light" rows="3" readonly>{{ block_3d }}</textarea>
-    <label class="fw-bold small">3. เลขอั้น 2 ตัวจ่ายครึ่ง:</label>
+    <label class="fw-bold small">3. เลขอั้น 2ตัว บน-ล่างและตัวกลับ(จ่ายครึ่ง):</label>
     <textarea class="form-control form-control-sm mb-3 bg-light" rows="3" readonly>{{ block_2d }}</textarea>
     <h6 class="fw-bold text-primary">🧾 บิลล่าสุดของผู้ซื้อรายนี้</h6>
     <table class="table table-sm table-bordered bg-white text-center" style="font-size:.75rem">
