@@ -119,6 +119,7 @@ BASE = """<!DOCTYPE html>
       <a href="/select-market">บันทึกโพย</a>
       <a href="/agent-reports">รายงานผล</a>
       <a href="/live-sales" class="text-info">📈 ยอดขายสด</a>
+      <a href="/risk-control" class="text-danger">🛡️ ควบคุมความเสี่ยง</a>
       {% if user.role == 'Admin' %}
       <a href="/campaigns" class="text-warning">📌 จัดการงวด</a>
       <a href="/blocked-numbers">🚫 เลขอั้น</a>
@@ -169,6 +170,15 @@ MACROS = """
 </div>
 {% endmacro %}
 """
+
+RISK_PAGE = """{% extends "base.html" %}
+{% block title %}ควบคุมความเสี่ยง{% endblock %}
+{% block body %}
+<div class="container-fluid my-3 px-4">
+  <h3 class="fw-bold text-danger mb-3">🛡️ ควบคุมความเสี่ยง (เรียลไทม์)</h3>
+  {{ inner|safe }}
+</div>
+{% endblock %}"""
 
 LIVE_SALES = """{% extends "base.html" %}
 {% block title %}ยอดขายเรียลไทม์{% endblock %}
@@ -258,6 +268,7 @@ PORTAL = """{% extends "base.html" %}
     <a href="/select-market" class="menu-item text-primary">🏠 กลับหน้าเลือกหวย</a>
     <a href="/agent-reports" class="menu-item text-success">📊 รายงานผล & สรุปยอด</a>
     <a href="/live-sales" class="menu-item text-info">📈 ยอดขายสด (เรียลไทม์)</a>
+    <a href="/risk-control" class="menu-item text-danger">🛡️ ควบคุมความเสี่ยง</a>
   </div>
 
   <div class="content-center">
@@ -616,7 +627,7 @@ PASSWORD = """{% extends "base.html" %}
 
 env = Environment(
     loader=DictLoader({
-        "base.html": BASE, "macros.html": MACROS, "login.html": LOGIN, "live_sales.html": LIVE_SALES, "select_market.html": SELECT_MARKET,
+        "base.html": BASE, "macros.html": MACROS, "login.html": LOGIN, "live_sales.html": LIVE_SALES, "risk.html": RISK_PAGE, "select_market.html": SELECT_MARKET,
         "portal.html": PORTAL, "bill.html": BILL, "reports.html": REPORTS, "users.html": USERS,
         "customers.html": CUSTOMERS, "rates.html": RATES, "password.html": PASSWORD,
     }),
@@ -673,6 +684,29 @@ def live_sales_data_api(request: Request, node: str = "", f: str = ""):
         if not me:
             return JSONResponse({"error": "forbidden"}, status_code=403)
         data = common.live_sales_data(c, me["username"], node or me["username"], f)
+    return JSONResponse(data)
+
+
+@app.get("/risk-control", response_class=HTMLResponse)
+def risk_control_page(request: Request):
+    with db() as conn:
+        c = conn.cursor()
+        me = get_me(c, request)
+        if not me:
+            return to_login()
+        note = "แสดงยอดทั้งระบบ" if me["role"] == "Admin" else "แสดงเฉพาะยอดของคุณและสายงานใต้คุณ"
+        inner = common.render_risk(c, "/risk-data", note)
+    return render(request, "risk.html", user=me, inner=inner)
+
+
+@app.get("/risk-data")
+def risk_data_api(request: Request, f: str = ""):
+    with db() as conn:
+        c = conn.cursor()
+        me = get_me(c, request)
+        if not me:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        data = common.risk_data(c, me["username"], f)
     return JSONResponse(data)
 
 
