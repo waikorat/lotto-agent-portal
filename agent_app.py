@@ -269,6 +269,7 @@ PORTAL = """{% extends "base.html" %}
     <a href="/agent-reports" class="menu-item text-success">📊 รายงานผล & สรุปยอด</a>
     <a href="/live-sales" class="menu-item text-info">📈 ยอดขายสด (เรียลไทม์)</a>
     <a href="/risk-control" class="menu-item text-danger">🛡️ ควบคุมความเสี่ยง</a>
+    <a href="/cancel-bills?campaign_id={{ camp.id }}" class="menu-item text-danger">🗑️ ยกเลิกบิล</a>
   </div>
 
   <div class="content-center">
@@ -700,14 +701,42 @@ def risk_control_page(request: Request):
 
 
 @app.get("/risk-data")
-def risk_data_api(request: Request, f: str = ""):
+def risk_data_api(request: Request, f: str = "", all: int = 0):
     with db() as conn:
         c = conn.cursor()
         me = get_me(c, request)
         if not me:
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        data = common.risk_data(c, me["username"], f)
+        data = common.risk_data(c, me["username"], f, bool(all))
     return JSONResponse(data)
+
+
+@app.get("/cancel-bills", response_class=HTMLResponse)
+def cancel_bills_page(request: Request, campaign_id: int):
+    with db() as conn:
+        c = conn.cursor()
+        me = get_me(c, request)
+        if not me:
+            return to_login()
+        camp = common.get_campaign(c, campaign_id)
+        if not camp:
+            return redir("/select-market", error="ไม่พบงวดหวยนี้")
+        content = common.render_cancel_bills(c, me, camp, "/cancel-bill", {"campaign_id": campaign_id})
+    back = f'<div class="mb-2"><a class="btn btn-primary btn-sm fw-bold" href="/portal?campaign_id={campaign_id}">⬅️ กลับหน้าบันทึกโพย</a></div>'
+    return render(request, "admin_page.html", user=me, content=back + content, draw_date="")
+
+
+@app.post("/cancel-bill")
+def cancel_bill_post(request: Request, campaign_id: int = Form(...), bill_no: str = Form(...), reason: str = Form("")):
+    with db() as conn:
+        c = conn.cursor()
+        me = get_me(c, request)
+        if not me:
+            return to_login()
+        if not _csrf_ok(request):
+            return redir("/cancel-bills", campaign_id=campaign_id, error="คำขอถูกปฏิเสธ (cross-site)")
+        ok, msg = common.cancel_bill(c, me, bill_no, reason)
+    return redir("/cancel-bills", campaign_id=campaign_id, **({"msg": msg} if ok else {"error": msg}))
 
 
 @app.get("/logout")
@@ -2036,8 +2065,8 @@ def dashboard_page(request: Request, draw: str = "", start_date: str = None, end
                          lotto_sales=sorted(lsd.items(), key=lambda x: x[1], reverse=True))
 
 
-def _audit(request, to, template, key, admin_only):
-    draw = request.query_params.get("draw", "")
+def _audit(request, to, title, admin_only):
+    qp = request.query_params
     with db() as conn:
         c = conn.cursor()
         me = get_me(c, request)
@@ -2047,27 +2076,19 @@ def _audit(request, to, template, key, admin_only):
             return redir("/select-market", error="เมนูนี้สำหรับแอดมินเท่านั้น")
         if not is_manager(me):
             return redir("/select-market", error="เมนูนี้สำหรับผู้จัดการขึ้นไป")
-        if not draw:
-            return _pick_draw(request, me, c, to)
-        _, draw_clean = _split_draw(draw)
-        like = f"%{common.like_escape(draw_clean)}%"
-        if me["role"] == "Admin":
-            c.execute("SELECT * FROM Transactions WHERE (draw_date = %s OR draw_date ILIKE %s) ORDER BY id DESC LIMIT 5000", (draw_clean, like))
-        else:
-            c.execute("SELECT * FROM Transactions WHERE ((draw_date = %s OR draw_date ILIKE %s) AND username = ANY(%s)) ORDER BY id DESC LIMIT 5000",
-                      (draw_clean, like, common.get_subtree(c, me["username"])))
-        rows = c.fetchall()
-    return _admin_render(request, me, template, draw_date=draw, **{key: rows})
+        content = common.render_audit(c, me, to, {}, title, camp=qp.get("camp", ""), buyer=qp.get("buyer", ""),
+                                      num=qp.get("num", ""), draw=qp.get("draw", ""))
+    return render(request, "admin_page.html", user=me, content=content, draw_date="")
 
 
 @app.get("/audit-all", response_class=HTMLResponse)
 def audit_all_page(request: Request):
-    return _audit(request, "/audit-all", ADM_AUDIT_ALL_CONTENT, "audit_rows", True)
+    return _audit(request, "/audit-all", "🔍 ตรวจสอบรายการซื้อทั้งหมด", True)
 
 
 @app.get("/audit-discount", response_class=HTMLResponse)
 def audit_discount_page(request: Request):
-    return _audit(request, "/audit-discount", ADM_AUDIT_DISCOUNT_CONTENT, "discount_rows", False)
+    return _audit(request, "/audit-discount", "🔍 ตรวจสอบส่วนลดลูกค้า / รายการซื้อ", False)
 
 
 @app.get("/db-inspector", response_class=HTMLResponse)
