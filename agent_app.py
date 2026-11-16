@@ -296,7 +296,7 @@ PORTAL = """{% extends "base.html" %}
       <button type="button" class="quick-btn" onclick="applyFrontRoot()">รูดหน้า</button>
       <button type="button" class="quick-btn" onclick="applyBackRoot()">รูดหลัง</button>
     </div>
-    <div class="preview-box" id="previewContent"><span class="text-muted small">preview:- (พิมพ์เลข 1 ตัวแล้วกดรูด หรือเลข 3 ตัวแล้วกด 6กลับ)</span></div>
+    <div class="preview-box" id="previewContent"><span class="text-muted small">preview:- (พิมพ์เลข 1 ตัวแล้วกดรูด หรือเลข 2-3 ตัวแล้วกด 6กลับ/สลับเลข)</span></div>
 
     <form method="POST" action="/portal-add-draft" class="p-3 bg-white rounded shadow-sm border mb-3" onreset="resetPreview()">
       <input type="hidden" name="campaign_id" value="{{ camp.id }}">
@@ -408,9 +408,9 @@ function resetPreview(){
 function refreshPreview(){ document.getElementById('hiddenGeneratedNums').value=''; setPreview(val('mainNumInput')); }
 function generated(nums){ setPreview(nums); document.getElementById('hiddenGeneratedNums').value=nums; }
 function apply6Box(){
-  var n=val('mainNumInput').trim(); if(!/^[0-9]{3}$/.test(n)){alert('กรุณากรอกตัวเลข 3 หลัก');return;}
-  var perms=new Set(), a=n.split('');
-  (function p(l){ if(l===2){perms.add(a.join(''));return;} for(var i=l;i<3;i++){[a[l],a[i]]=[a[i],a[l]];p(l+1);[a[l],a[i]]=[a[i],a[l]];} })(0);
+  var n=val('mainNumInput').trim(); if(!/^[0-9]{2,3}$/.test(n)){alert('กรุณากรอกตัวเลข 2 หลัก หรือ 3 หลัก');return;}
+  var perms=new Set(), a=n.split(''), len=a.length;
+  (function p(l){ if(l===len-1){perms.add(a.join(''));return;} for(var i=l;i<len;i++){[a[l],a[i]]=[a[i],a[l]];p(l+1);[a[l],a[i]]=[a[i],a[l]];} })(0);
   generated(Array.from(perms).join(','));
 }
 function digit1(){ var d=val('mainNumInput').trim(); if(!/^[0-9]$/.test(d)){alert('กรุณากรอกตัวเลข 1 หลัก');return null;} return d; }
