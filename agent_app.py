@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 
 from fastapi import Depends, FastAPI, Form, Request
 from starlette.concurrency import run_in_threadpool
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import DictLoader, Environment
 
@@ -853,39 +853,11 @@ def credit_action(request: Request, target: str = Form(...), op: str = Form(...)
 
 # ============================================================ เชื่อมต่อ LINE / Messenger (/integrations)
 
-INTEGRATIONS = """{% extends "base.html" %}
-{% block body %}
-<div class="container my-3" style="max-width:900px">
-  <h3 class="fw-bold text-primary mb-1">🔗 เชื่อมต่อแชท (LINE / Facebook Messenger)</h3>
-  <p class="text-muted small">ตั้งค่าบัญชีของคุณเองเพื่อ ① รับโพยจากลูกค้าทางแชทเข้าโพยร่าง ② ส่งบิลให้ลูกค้าเมื่อกด "บันทึกบิล/ส่งบิล" ลูกค้าผูกบัญชีโดยพิมพ์ <code>ผูก รหัส</code> ในแชท (รหัสดูได้ที่หน้า "จัดการลูกค้า")</p>
-  {% for ch in channels %}
-  <div class="card shadow-sm p-3 mb-3">
-    <h5 class="fw-bold">{{ ch.title }} {% if ch.saved %}<span class="badge {{ 'bg-success' if ch.enabled else 'bg-secondary' }}">{{ 'เปิดใช้งาน' if ch.enabled else 'ปิดอยู่' }}</span>{% else %}<span class="badge bg-light text-dark border">ยังไม่ตั้งค่า</span>{% endif %}</h5>
-    {% if ch.key %}
-    <div class="mb-2"><label class="form-label small fw-bold mb-0">Webhook URL (นำไปวางในหน้าตั้งค่าของ {{ 'LINE Developers' if ch.id == 'line' else 'Meta for Developers' }})</label>
-      <input class="form-control form-control-sm" readonly value="{{ ch.url }}" onclick="this.select()"></div>
-    {% else %}<div class="alert alert-light border py-1 small">บันทึกค่าด้านล่างก่อน ระบบจะสร้าง Webhook URL ให้</div>{% endif %}
-    <form method="POST" action="/integrations/save">
-      <input type="hidden" name="channel" value="{{ ch.id }}">
-      {% for f in ch.fields %}
-      <div class="mb-2"><label class="form-label small fw-bold mb-0">{{ f.label }}</label>
-        <input type="{{ 'password' if f.secret else 'text' }}" name="{{ f.key }}" class="form-control form-control-sm" autocomplete="off"
-          placeholder="{{ 'ตั้งค่าแล้ว — เว้นว่างเพื่อคงค่าเดิม' if f.has else '' }}" value="{{ '' if f.secret else f.value }}"></div>
-      {% endfor %}
-      <div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="enabled" value="1" id="en_{{ ch.id }}" {{ 'checked' if ch.enabled or not ch.saved }}><label class="form-check-label small" for="en_{{ ch.id }}">เปิดใช้งาน</label></div>
-      <button class="btn btn-primary btn-sm fw-bold px-4">💾 บันทึก</button>
-    </form>
-    <details class="mt-2 small"><summary class="fw-bold">วิธีตั้งค่า</summary>
-      {% if ch.id == 'line' %}
-      <ol class="mb-0"><li>สร้าง Messaging API channel ที่ LINE Developers Console</li><li>คัดลอก Channel secret และออก Channel access token (long-lived) มาใส่ด้านบน</li><li>วาง Webhook URL ในแท็บ Messaging API → เปิด "Use webhook"</li><li>ลูกค้าเพิ่มเพื่อน OA แล้วพิมพ์ <code>ผูก รหัสลูกค้า</code></li></ol>
-      {% else %}
-      <ol class="mb-0"><li>สร้างแอปที่ Meta for Developers เพิ่มผลิตภัณฑ์ Messenger และเชื่อมกับ Facebook Page</li><li>คัดลอก Page access token และ App secret มาใส่ด้านบน ตั้ง Verify token เอง</li><li>ที่หน้า Webhooks ใส่ Callback URL (ด้านบน) และ Verify token เดียวกัน แล้ว subscribe เหตุการณ์ <code>messages</code></li><li>ลูกค้าส่งข้อความหาเพจแล้วพิมพ์ <code>ผูก รหัสลูกค้า</code></li></ol>
-      {% endif %}
-    </details>
-  </div>
-  {% endfor %}
-</div>
-{% endblock %}"""
+def _public_base(request):
+    return common.public_base(request.base_url)
+
+
+INTEGRATIONS = """{% extends "base.html" %}{% block body %}{{ inner|safe }}{% endblock %}"""
 env.loader.mapping["integrations.html"] = INTEGRATIONS
 
 
@@ -898,16 +870,8 @@ def integrations_page(request: Request):
             return to_login()
         if not is_manager(me):
             return redir("/select-market", error="เมนูนี้สำหรับผู้จัดการขึ้นไป")
-        base = str(request.base_url).rstrip("/")
-        channels = []
-        for cid, meta in common.CHANNELS.items():
-            cur = common.chan_get(c, me["username"], cid)
-            cfg = cur["cfg"] if cur else {}
-            channels.append({"id": cid, "title": meta["title"], "saved": bool(cur), "enabled": bool(cur and cur["enabled"]),
-                             "key": cur["key"] if cur else "", "url": f"{base}/webhook/{cid}/{cur['key']}" if cur else "",
-                             "fields": [{"key": k, "label": lb, "secret": sec, "has": bool(cfg.get(k)), "value": cfg.get(k, "") if not sec else ""}
-                                        for k, lb, sec in meta["fields"]]})
-    return render(request, "integrations.html", user=me, channels=channels)
+        inner = common.render_integrations(c, me, _public_base(request), "/integrations/save", {})
+    return render(request, "integrations.html", user=me, inner=inner)
 
 
 @app.post("/integrations/save")
@@ -920,40 +884,25 @@ async def integrations_save(request: Request):
             return to_login()
         if not is_manager(me) or not _csrf_ok(request):
             return redir("/integrations", error="ไม่มีสิทธิ์ หรือคำขอถูกปฏิเสธ")
-        channel = str(form.get("channel", ""))
-        if not common.chan_save(c, me["username"], channel, {k: str(v) for k, v in form.items()}, enabled=bool(form.get("enabled"))):
-            return redir("/integrations", error="ช่องทางไม่ถูกต้อง")
-    return redir("/integrations", msg="บันทึกการเชื่อมต่อแล้ว")
+        ok, note = common.integrations_save(c, me, _public_base(request), str(form.get("channel", "")), form)
+    return redir("/integrations", **({"msg": note} if ok else {"error": note}))
 
 
-def _line_process(key, body, signature):
-    replies, owner, cfg = [], None, None
-    with db() as conn:
-        c = conn.cursor()
-        ch = common.chan_by_key(c, "line", key)
-        if not ch:
-            return 404
-        owner, cfg = ch["owner"], ch["cfg"]
-        if not cfg.get("channel_secret") or not common.verify_line_signature(cfg["channel_secret"], body, signature):
-            return 403
-        for ev in (json.loads(body.decode("utf-8") or "{}").get("events") or []):
-            msg = ev.get("message") or {}
-            uid = (ev.get("source") or {}).get("userId")
-            if ev.get("type") == "message" and msg.get("type") == "text" and uid:
-                text = common.handle_chat_message(c, owner, "line", uid, msg.get("text", ""))
-                if text:
-                    replies.append((ev.get("replyToken"), uid, text))
-    for token, uid, text in replies:
-        ok, err = common.send_text("line", cfg, uid, text, reply_token=token)
-        if not ok:
-            print("LINE reply failed:", err)
-    return 200
+def _hdrs(request):
+    return {k.lower(): v for k, v in request.headers.items()}
 
 
 @app.post("/webhook/line/{key}")
 async def webhook_line(key: str, request: Request):
     body = await request.body()
-    status = await run_in_threadpool(_line_process, key, body, request.headers.get("x-line-signature", ""))
+    status = await run_in_threadpool(common.process_webhook, "line", key, body, _hdrs(request))
+    return JSONResponse({"ok": status == 200}, status_code=status)
+
+
+@app.post("/webhook/telegram/{key}")
+async def webhook_telegram(key: str, request: Request):
+    body = await request.body()
+    status = await run_in_threadpool(common.process_webhook, "telegram", key, body, _hdrs(request))
     return JSONResponse({"ok": status == 200}, status_code=status)
 
 
@@ -969,35 +918,20 @@ def webhook_messenger_verify(key: str, request: Request):
     return PlainTextResponse("forbidden", status_code=403)
 
 
-def _messenger_process(key, body, signature):
-    replies, cfg = [], None
-    with db() as conn:
-        c = conn.cursor()
-        ch = common.chan_by_key(c, "messenger", key)
-        if not ch:
-            return 404
-        owner, cfg = ch["owner"], ch["cfg"]
-        if not cfg.get("app_secret") or not common.verify_fb_signature(cfg["app_secret"], body, signature):
-            return 403
-        for entry in (json.loads(body.decode("utf-8") or "{}").get("entry") or []):
-            for m in entry.get("messaging") or []:
-                psid, text = (m.get("sender") or {}).get("id"), (m.get("message") or {}).get("text")
-                if psid and text and not (m.get("message") or {}).get("is_echo"):
-                    reply = common.handle_chat_message(c, owner, "messenger", psid, text)
-                    if reply:
-                        replies.append((psid, reply))
-    for psid, text in replies:
-        ok, err = common.messenger_send(cfg, psid, text)
-        if not ok:
-            print("Messenger reply failed:", err)
-    return 200
-
-
 @app.post("/webhook/messenger/{key}")
 async def webhook_messenger(key: str, request: Request):
     body = await request.body()
-    status = await run_in_threadpool(_messenger_process, key, body, request.headers.get("x-hub-signature-256", ""))
+    status = await run_in_threadpool(common.process_webhook, "messenger", key, body, _hdrs(request))
     return JSONResponse({"ok": status == 200}, status_code=status)
+
+
+@app.get("/bill-img/{bill_no}/{token}.png")
+def bill_image(bill_no: str, token: str, d: int = 0):
+    """รูปบิล (เข้าถึงด้วยโทเค็นที่เซ็นไว้ — ให้ LINE ดึงรูปไปแสดงได้)"""
+    png = common.bill_image_response_data(bill_no, token, bool(d))
+    if not png:
+        return PlainTextResponse("not found", status_code=404)
+    return Response(png, media_type="image/png", headers={"Cache-Control": "private, max-age=300"})
 
 
 @app.get("/logout")
@@ -1256,7 +1190,7 @@ def portal_confirm_bill(request: Request, campaign_id: int = Form(...), customer
     try:                                           # ส่งบิลใบแรกให้ลูกค้า (หลังบันทึกสำเร็จ; ส่งไม่ได้ไม่กระทบบิล)
         with db() as conn2:
             c2 = conn2.cursor()
-            sent, errs = common.send_bill_to_customer(c2, me["username"], common.bill_dict(c2, bill_no))
+            sent, errs = common.send_bill_to_customer(c2, me["username"], common.bill_dict(c2, bill_no), base_url=_public_base(request))
         if sent:
             note += f" และส่งบิลให้ลูกค้าทางแชทแล้ว ({sent} ช่องทาง)"
         if errs:
