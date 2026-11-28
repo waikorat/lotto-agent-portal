@@ -123,6 +123,7 @@ BASE = """<!DOCTYPE html>
       <a href="/live-sales" class="text-info">📈 ยอดขายสด</a>
       <a href="/risk-control" class="text-danger">🛡️ ควบคุมความเสี่ยง</a>
       <a href="/credits" class="text-success">💳 เครดิต</a>
+      <a href="/accounts" class="text-success">📒 บัญชี/รับชำระ</a>
       {% if user.role in ['Admin','Master Agent','Agent'] %}<a href="/integrations" class="text-info">🔗 เชื่อมต่อแชท</a>{% endif %}
       {% if user.role == 'Admin' %}
       <a href="/campaigns" class="text-warning">📌 จัดการงวด</a>
@@ -130,6 +131,7 @@ BASE = """<!DOCTYPE html>
       <a href="/results">🏆 ผลรางวัล</a>
       <a href="/audit-all">🔍 ตรวจสอบทั้งหมด</a>
       <a href="/db-inspector">🗄️ ตรวจสอบ DB</a>
+      <a href="/backup">💾 สำรอง/นำเข้าข้อมูล</a>
       {% endif %}
       {% if user.role in ['Admin','Master Agent','Agent'] %}<a href="/dashboard">📊 แดชบอร์ด</a><a href="/audit-discount">🔍 ส่วนลด</a>{% endif %}
       {% if user.role in ['Admin','Master Agent','Agent'] %}
@@ -849,6 +851,95 @@ def credit_action(request: Request, target: str = Form(...), op: str = Form(...)
             return redir("/credits", error="คำขอถูกปฏิเสธ (cross-site)")
         ok, text = common.credit_adjust(c, me, target, op, amount, note)
     return redir("/credits", **({"msg": text} if ok else {"error": text}))
+
+
+# ============================================================ สำรอง / นำเข้าข้อมูล (/backup)
+
+@app.get("/backup", response_class=HTMLResponse)
+def backup_page(request: Request):
+    with db() as conn:
+        c = conn.cursor()
+        me, bad = _admin_gate(c, request)
+        if bad:
+            return bad
+        content = common.render_backup(c, me, "/backup/download", "/backup/import", {})
+    return render(request, "admin_page.html", user=me, content=content, draw_date="")
+
+
+@app.get("/backup/download")
+def backup_dl(request: Request, fmt: str = "xlsx"):
+    try:
+        with db() as conn:
+            c = conn.cursor()
+            me, bad = _admin_gate(c, request)
+            if bad:
+                return bad
+            data, name, mime = common.backup_download(c, me, fmt, request.query_params.getlist("t"))
+    except ImportError:
+        return redir("/backup", error="ส่งออก Excel ต้องติดตั้ง openpyxl (เพิ่มใน requirements.txt) — หรือเลือกส่งออกเป็น CSV/JSON")
+    return Response(data, media_type=mime, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+@app.post("/backup/import")
+async def backup_import(request: Request):
+    form = await request.form()
+    f = form.get("file")
+    data = await f.read() if f is not None and hasattr(f, "read") else b""
+    try:
+        with db() as conn:
+            c = conn.cursor()
+            me, bad = _admin_gate(c, request, mutating=True)
+            if bad:
+                return bad
+            if str(form.get("confirm", "")).strip() != "ยืนยัน":
+                return redir("/backup", error="ต้องพิมพ์คำว่า ยืนยัน เพื่อนำเข้า")
+            if not data or len(data) > 40_000_000:
+                return redir("/backup", error="ไม่พบไฟล์ หรือไฟล์ใหญ่เกิน 40MB")
+            parsed = common.parse_backup_file(getattr(f, "filename", ""), data)
+            ok, text, rep = common.import_backup(c, me, parsed, "replace" if form.get("mode") == "replace" else "merge")
+            if ok:
+                text += " · " + ", ".join(f"{t}: {n_ok}/{n_all}" for t, n_all, n_ok in rep)[:300]
+    except ValueError as e:
+        return redir("/backup", error=str(e)[:200])
+    except Exception as e:
+        print("backup import error:", e)
+        return redir("/backup", error="นำเข้าไม่สำเร็จ (ย้อนกลับทั้งหมดแล้ว): " + str(e)[:150])
+    return redir("/backup", **({"msg": text} if ok else {"error": text}))
+
+
+# ============================================================ บัญชี / รับชำระ (/accounts)
+
+@app.get("/accounts", response_class=HTMLResponse)
+def accounts_page(request: Request, cp: str = None):
+    with db() as conn:
+        c = conn.cursor()
+        me = get_me(c, request)
+        if not me:
+            return to_login()
+        content = common.render_accounts(c, me, "/accounts", "/accounts/action", {}, cp=cp, qs="")
+    return render(request, "admin_page.html", user=me, content=content, draw_date="")
+
+
+@app.post("/accounts/action")
+async def accounts_action(request: Request):
+    form = await request.form()
+    cp = str(form.get("cp") or form.get("target") or "")
+    with db() as conn:
+        c = conn.cursor()
+        me = get_me(c, request)
+        if not me:
+            return to_login()
+        if not _csrf_ok(request):
+            return redir("/accounts", error="คำขอถูกปฏิเสธ (cross-site)")
+        if form.get("op") == "void":
+            try:
+                ok, text = common.account_void(c, me, int(form.get("pay_id")))
+            except (TypeError, ValueError):
+                ok, text = False, "ข้อมูลไม่ถูกต้อง"
+        else:
+            ok, text = common.account_pay(c, me, form)
+    extra = {"cp": cp} if cp else {}
+    return redir("/accounts", **extra, **({"msg": text} if ok else {"error": text}))
 
 
 # ============================================================ เชื่อมต่อ LINE / Messenger (/integrations)
